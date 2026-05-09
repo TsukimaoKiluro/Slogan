@@ -1,0 +1,29 @@
+{
+  "user": {
+    "username": "",
+    "email": "",
+    "nickname": "",
+    "phone": "",
+    "bio": "",
+    "avatar": ""
+  },
+  "api": {
+    "provider": "openai",
+    "endpoint": "",
+    "apiKey": "",
+    "model": "",
+    "timeout": 60,
+    "maxTokens": 4096,
+    "temperature": 0.7
+  },
+  "appearance": {
+    "theme": "auto"
+  },
+  "notification": {
+    "emailNotify": true,
+    "pushNotify": true,
+    "soundNotify": false,
+    "quietHoursStart": "22:00",
+    "quietHoursEnd": "08:00"
+  }
+}

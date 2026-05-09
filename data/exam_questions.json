@@ -1,0 +1,275 @@
+{
+  "description": "考试题目库 - 按学科分类存储，方便复用",
+  "version": "1.0.0",
+  "lastUpdated": "2026-05-09",
+  "subjects": {
+    "math": {
+      "name": "高等数学",
+      "description": "高等数学阶段性测试题目",
+      "questions": [
+        {
+          "id": "math_001",
+          "type": "single",
+          "difficulty": "medium",
+          "knowledgePoints": ["极限", "连续性"],
+          "content": "设函数 $f(x) = \\begin{cases} \\frac{\\sin x}{x}, & x \\neq 0 \\\\ 1, & x = 0 \\end{cases}$，则 $f(x)$ 在 $x = 0$ 处（ ）",
+          "options": [
+            "A. 不连续",
+            "B. 连续但不可导",
+            "C. 可导且 $f'(0) = 0$",
+            "D. 可导且 $f'(0) = 1$"
+          ],
+          "answer": "C",
+          "score": 5,
+          "analysis": "首先验证连续性：$\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1 = f(0)$，所以连续。再求导数：$f'(0) = \\lim_{x \\to 0} \\frac{f(x) - f(0)}{x} = \\lim_{x \\to 0} \\frac{\\sin x - x}{x^2} = \\lim_{x \\to 0} \\frac{\\cos x - 1}{2x} = \\lim_{x \\to 0} \\frac{-\\sin x}{2} = 0$"
+        },
+        {
+          "id": "math_002",
+          "type": "single",
+          "difficulty": "hard",
+          "knowledgePoints": ["导数", "极值"],
+          "content": "函数 $f(x) = x^3 - 3x^2 + 1$ 的极大值点是（ ）",
+          "options": [
+            "A. $x = 0$",
+            "B. $x = 1$",
+            "C. $x = 2$",
+            "D. $x = -1$"
+          ],
+          "answer": "A",
+          "score": 5,
+          "analysis": "求导得 $f'(x) = 3x^2 - 6x = 3x(x-2)$，令 $f'(x) = 0$ 得 $x = 0$ 或 $x = 2$。再求二阶导数 $f''(x) = 6x - 6$，$f''(0) = -6 < 0$，所以 $x = 0$ 是极大值点；$f''(2) = 6 > 0$，所以 $x = 2$ 是极小值点。"
+        },
+        {
+          "id": "math_003",
+          "type": "fill",
+          "difficulty": "easy",
+          "knowledgePoints": ["积分"],
+          "content": "$\\int_0^1 x^2 dx = $ ______",
+          "answer": "\\frac{1}{3}",
+          "score": 5,
+          "analysis": "根据牛顿-莱布尼茨公式：$\\int_0^1 x^2 dx = \\left[ \\frac{x^3}{3} \\right]_0^1 = \\frac{1}{3} - 0 = \\frac{1}{3}$"
+        },
+        {
+          "id": "math_004",
+          "type": "judge",
+          "difficulty": "medium",
+          "knowledgePoints": ["级数", "收敛性"],
+          "content": "若级数 $\\sum_{n=1}^{\\infty} a_n$ 收敛，则 $\\lim_{n \\to \\infty} a_n = 0$",
+          "answer": true,
+          "score": 5,
+          "analysis": "这是级数收敛的必要条件。如果级数收敛，则其通项必须趋于0。但反之不成立，如调和级数 $\\sum \\frac{1}{n}$ 的通项趋于0但级数发散。"
+        },
+        {
+          "id": "math_005",
+          "type": "multiple",
+          "difficulty": "hard",
+          "knowledgePoints": ["多元函数", "偏导数"],
+          "content": "设 $z = f(x, y)$ 在点 $(x_0, y_0)$ 处可微，则下列结论正确的是（ ）",
+          "options": [
+            "A. $f(x, y)$ 在 $(x_0, y_0)$ 处连续",
+            "B. $f(x, y)$ 在 $(x_0, y_0)$ 处偏导数存在",
+            "C. $f(x, y)$ 在 $(x_0, y_0)$ 处方向导数存在",
+            "D. $f(x, y)$ 在 $(x_0, y_0)$ 处取得极值"
+          ],
+          "answer": ["A", "B", "C"],
+          "score": 10,
+          "analysis": "可微性是最强的条件：可微 $\\Rightarrow$ 连续、偏导数存在、方向导数存在。但可微不能推出取得极值，极值需要额外的条件。"
+        }
+      ]
+    },
+    "linear_algebra": {
+      "name": "线性代数",
+      "description": "线性代数阶段性测试题目",
+      "questions": [
+        {
+          "id": "la_001",
+          "type": "single",
+          "difficulty": "medium",
+          "knowledgePoints": ["矩阵", "行列式"],
+          "content": "设 $A$ 为 $3$ 阶方阵，且 $|A| = 2$，则 $|2A| = $（ ）",
+          "options": [
+            "A. 4",
+            "B. 8",
+            "C. 16",
+            "D. 32"
+          ],
+          "answer": "C",
+          "score": 5,
+          "analysis": "对于 $n$ 阶方阵 $A$，有 $|kA| = k^n |A|$。这里 $n = 3$，所以 $|2A| = 2^3 \\times |A| = 8 \\times 2 = 16$"
+        },
+        {
+          "id": "la_002",
+          "type": "single",
+          "difficulty": "hard",
+          "knowledgePoints": ["特征值", "特征向量"],
+          "content": "设 $A$ 为 $n$ 阶实对称矩阵，则下列说法错误的是（ ）",
+          "options": [
+            "A. $A$ 的特征值都是实数",
+            "B. $A$ 的不同特征值对应的特征向量正交",
+            "C. $A$ 一定可以对角化",
+            "D. $A$ 的特征向量都是单位向量"
+          ],
+          "answer": "D",
+          "score": 5,
+          "analysis": "实对称矩阵的特征值都是实数，不同特征值对应的特征向量正交，且一定可以对角化。但特征向量不一定是单位向量，需要进行单位化处理。"
+        },
+        {
+          "id": "la_003",
+          "type": "fill",
+          "difficulty": "medium",
+          "knowledgePoints": ["矩阵的秩"],
+          "content": "设矩阵 $A = \\begin{pmatrix} 1 & 2 & 3 \\\\ 2 & 4 & 5 \\\\ 3 & 6 & 8 \\end{pmatrix}$，则 $r(A) = $ ______",
+          "answer": "2",
+          "score": 5,
+          "analysis": "观察发现第2行 = 第1行 $\\times$ 2，第3行 = 第1行 $\\times$ 3。所以行向量线性相关，秩小于3。又前两列线性无关，所以秩为2。"
+        },
+        {
+          "id": "la_004",
+          "type": "judge",
+          "difficulty": "easy",
+          "knowledgePoints": ["向量组", "线性相关"],
+          "content": "若向量组 $\\alpha_1, \\alpha_2, \\alpha_3$ 线性无关，则向量组 $\\alpha_1 + \\alpha_2, \\alpha_2 + \\alpha_3, \\alpha_3 + \\alpha_1$ 也线性无关",
+          "answer": true,
+          "score": 5,
+          "analysis": "设 $k_1(\\alpha_1 + \\alpha_2) + k_2(\\alpha_2 + \\alpha_3) + k_3(\\alpha_3 + \\alpha_1) = 0$，整理得 $(k_1 + k_3)\\alpha_1 + (k_1 + k_2)\\alpha_2 + (k_2 + k_3)\\alpha_3 = 0$。由于 $\\alpha_1, \\alpha_2, \\alpha_3$ 线性无关，所以系数全为0，解得 $k_1 = k_2 = k_3 = 0$。"
+        }
+      ]
+    },
+    "probability": {
+      "name": "概率论",
+      "description": "概率论与数理统计阶段性测试题目",
+      "questions": [
+        {
+          "id": "prob_001",
+          "type": "single",
+          "difficulty": "medium",
+          "knowledgePoints": ["概率", "条件概率"],
+          "content": "设 $A, B$ 为两个随机事件，$P(A) = 0.5$，$P(B) = 0.6$，$P(A \\cup B) = 0.8$，则 $P(A|B) = $（ ）",
+          "options": [
+            "A. $\\frac{1}{3}$",
+            "B. $\\frac{1}{2}$",
+            "C. $\\frac{2}{3}$",
+            "D. $\\frac{3}{4}$"
+          ],
+          "answer": "B",
+          "score": 5,
+          "analysis": "由 $P(A \\cup B) = P(A) + P(B) - P(A \\cap B)$，得 $P(A \\cap B) = 0.5 + 0.6 - 0.8 = 0.3$。所以 $P(A|B) = \\frac{P(A \\cap B)}{P(B)} = \\frac{0.3}{0.6} = \\frac{1}{2}$"
+        },
+        {
+          "id": "prob_002",
+          "type": "single",
+          "difficulty": "hard",
+          "knowledgePoints": ["随机变量", "期望"],
+          "content": "设随机变量 $X$ 服从参数为 $\\lambda$ 的泊松分布，且 $E(X^2) = 6$，则 $\\lambda = $（ ）",
+          "options": [
+            "A. 1",
+            "B. 2",
+            "C. 3",
+            "D. 4"
+          ],
+          "answer": "B",
+          "score": 5,
+          "analysis": "对于泊松分布，$E(X) = \\lambda$，$D(X) = \\lambda$。由 $E(X^2) = D(X) + [E(X)]^2 = \\lambda + \\lambda^2 = 6$，解得 $\\lambda = 2$（舍去负根）"
+        },
+        {
+          "id": "prob_003",
+          "type": "fill",
+          "difficulty": "easy",
+          "knowledgePoints": ["正态分布"],
+          "content": "设 $X \\sim N(0, 1)$，则 $P(X > 1.96) \\approx $ ______（保留两位小数）",
+          "answer": "0.025",
+          "score": 5,
+          "analysis": "标准正态分布中，$P(|X| > 1.96) = 0.05$，由对称性 $P(X > 1.96) = 0.025$"
+        },
+        {
+          "id": "prob_004",
+          "type": "judge",
+          "difficulty": "medium",
+          "knowledgePoints": ["大数定律"],
+          "content": "设 $X_1, X_2, ..., X_n$ 是独立同分布的随机变量序列，且 $E(X_i) = \\mu$，则 $\\frac{1}{n}\\sum_{i=1}^{n} X_i$ 依概率收敛于 $\\mu$",
+          "answer": true,
+          "score": 5,
+          "analysis": "这是大数定律的内容。当样本量足够大时，样本均值依概率收敛于总体期望。"
+        }
+      ]
+    },
+    "physics": {
+      "name": "大学物理",
+      "description": "大学物理阶段性测试题目",
+      "questions": [
+        {
+          "id": "phy_001",
+          "type": "single",
+          "difficulty": "medium",
+          "knowledgePoints": ["力学", "牛顿定律"],
+          "content": "质量为 $m$ 的物体在光滑水平面上受水平力 $F$ 作用做匀加速直线运动，加速度为 $a$。若力的大小不变，方向与水平面成 $30°$ 角斜向上拉物体，则加速度为（ ）",
+          "options": [
+            "A. $a$",
+            "B. $\\frac{\\sqrt{3}}{2}a$",
+            "C. $\\frac{1}{2}a$",
+            "D. $\\frac{\\sqrt{3}}{3}a$"
+          ],
+          "answer": "B",
+          "score": 5,
+          "analysis": "水平拉时：$F = ma$。斜向上拉时，水平分力为 $F\\cos 30° = \\frac{\\sqrt{3}}{2}F$，所以加速度 $a' = \\frac{F\\cos 30°}{m} = \\frac{\\sqrt{3}}{2}a$"
+        },
+        {
+          "id": "phy_002",
+          "type": "single",
+          "difficulty": "hard",
+          "knowledgePoints": ["电磁学", "电场"],
+          "content": "真空中，两个点电荷 $+q$ 和 $-q$ 相距为 $d$，则它们连线中点处的电场强度大小为（ ）",
+          "options": [
+            "A. 0",
+            "B. $\\frac{kq}{d^2}$",
+            "C. $\\frac{2kq}{d^2}$",
+            "D. $\\frac{8kq}{d^2}$"
+          ],
+          "answer": "D",
+          "score": 5,
+          "analysis": "中点到每个电荷的距离为 $d/2$。$+q$ 产生的电场指向远离 $+q$ 方向，$-q$ 产生的电场指向 $-q$ 方向，两者在中点处同向。每个电场大小为 $E = \\frac{kq}{(d/2)^2} = \\frac{4kq}{d^2}$，总电场为 $2E = \\frac{8kq}{d^2}$"
+        },
+        {
+          "id": "phy_003",
+          "type": "fill",
+          "difficulty": "easy",
+          "knowledgePoints": ["能量守恒"],
+          "content": "质量为 $m$ 的物体从高度 $h$ 处自由下落，不计空气阻力，落地时的速度大小为 ______",
+          "answer": "$\\sqrt{2gh}$",
+          "score": 5,
+          "analysis": "由机械能守恒：$mgh = \\frac{1}{2}mv^2$，解得 $v = \\sqrt{2gh}$"
+        },
+        {
+          "id": "phy_004",
+          "type": "judge",
+          "difficulty": "medium",
+          "knowledgePoints": ["热力学", "热力学第一定律"],
+          "content": "理想气体在等温膨胀过程中，内能保持不变",
+          "answer": true,
+          "score": 5,
+          "analysis": "理想气体的内能只与温度有关。等温过程中温度不变，所以内能不变。吸收的热量全部用于对外做功。"
+        }
+      ]
+    }
+  },
+  "comprehensive": {
+    "description": "综合应用题模板",
+    "templates": [
+      {
+        "id": "comp_001",
+        "type": "comprehensive",
+        "difficulty": "hard",
+        "knowledgePoints": ["综合应用"],
+        "content": "请结合所学知识，分析并解决以下实际问题...",
+        "subQuestions": [
+          "（1）简述相关理论知识；",
+          "（2）建立数学模型；",
+          "（3）求解并分析结果。"
+        ],
+        "referenceAnswer": "综合应用题答案要点...",
+        "score": 20,
+        "analysis": "本题考察综合运用知识解决实际问题的能力..."
+      }
+    ]
+  }
+}

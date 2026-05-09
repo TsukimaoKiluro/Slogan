@@ -1,0 +1,55 @@
+{
+  "name": "assistant_character",
+  "description": "AI助手数字人 - 照片帧动画",
+  "fps": 4,
+  "width": 256,
+  "height": 256,
+  "pixelSize": 2,
+  "frames": [
+    {
+      "frame": 1,
+      "name": "idle_1",
+      "image": "frames/img.png",
+      "duration": 500
+    },
+    {
+      "frame": 2,
+      "name": "idle_2",
+      "image": "frames/img_1.png",
+      "duration": 500
+    },
+    {
+      "frame": 3,
+      "name": "idle_3",
+      "image": "frames/img_2.png",
+      "duration": 500
+    },
+    {
+      "frame": 4,
+      "name": "idle_4",
+      "image": "frames/img_3.png",
+      "duration": 500
+    },
+    {
+      "frame": 5,
+      "name": "idle_5",
+      "image": "frames/img_4.png",
+      "duration": 500
+    },
+    {
+      "frame": 6,
+      "name": "idle_6",
+      "image": "frames/img_5.png",
+      "duration": 500
+    }
+  ],
+  "filters": {
+    "pixelate": true,
+    "pixelSize": 2,
+    "contrast": 1.2,
+    "brightness": 1.1,
+    "saturation": 0.9,
+    "scanlines": true,
+    "crt": true
+  }
+}
