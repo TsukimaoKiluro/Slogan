@@ -2,9 +2,11 @@
 server/data/*.db
 server/data/*.db-*
 
+# 文档
+doc/
+
 # 上传文件
-server/uploads/*
-!server/uploads/.gitkeep
+uploads/
 
 # 环境变量
 .env
