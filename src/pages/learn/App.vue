@@ -1,5 +1,5 @@
 <template>
-  <div class="learn-container p-6">
+  <div class="learn-container h-full p-6 overflow-y-auto">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between mb-6">
       <div>
@@ -76,6 +76,7 @@
               <option value="video">视频</option>
               <option value="document">文档</option>
               <option value="ppt">PPT</option>
+              <option value="exam">考试试卷</option>
             </select>
           </div>
 
@@ -158,7 +159,7 @@
     <!-- 资料列表 -->
     <div v-else-if="filteredMaterials.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       <div v-for="material in filteredMaterials" :key="material.id" class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300">
-        <figure class="h-40 bg-base-200 relative cursor-pointer" @click="openMaterial(material)">
+        <figure class="h-40 bg-base-200 relative cursor-pointer" @click="material.category === 'exam' ? openExamMaterial(material) : openMaterial(material)">
           <!-- 视频封面 -->
           <div v-if="material.category === 'video'" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-secondary/20 to-primary/20">
             <div class="w-16 h-16 rounded-full bg-black/50 flex items-center justify-center hover:bg-black/70 transition-colors">
@@ -167,7 +168,7 @@
               </svg>
             </div>
           </div>
-          
+
           <!-- 文档封面 -->
           <div v-else-if="material.category === 'document'" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-accent/20 to-primary/20">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-accent/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -177,7 +178,17 @@
               <line x1="16" y1="17" x2="8" y2="17"></line>
             </svg>
           </div>
-          
+
+          <!-- 考试封面 -->
+          <div v-else-if="material.category === 'exam'" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-warning/20 to-error/20">
+            <div class="text-center">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-warning/60 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+              </svg>
+              <span class="badge badge-warning badge-sm">考试试卷</span>
+            </div>
+          </div>
+
           <!-- PPT封面 -->
           <div v-else class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-info/20 to-primary/20">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-info/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -186,7 +197,7 @@
               <line x1="12" y1="17" x2="12" y2="21"></line>
             </svg>
           </div>
-          
+
           <!-- 难度标签 -->
           <div class="absolute top-2 right-2">
             <span class="badge badge-sm" :class="getDifficultyClass(material.difficulty)">
@@ -194,9 +205,9 @@
             </span>
           </div>
         </figure>
-        
+
         <div class="card-body p-4">
-          <h3 class="card-title text-sm line-clamp-2 cursor-pointer hover:text-primary" @click="openMaterial(material)">
+          <h3 class="card-title text-sm line-clamp-2 cursor-pointer hover:text-primary" @click="material.category === 'exam' ? openExamMaterial(material) : openMaterial(material)">
             {{ material.title }}
           </h3>
           
@@ -211,8 +222,8 @@
           
           <div class="card-actions justify-end mt-3">
             <button class="btn btn-sm btn-ghost" @click.stop="editMaterial(material)">编辑</button>
-            <button class="btn btn-sm btn-primary" @click.stop="openMaterial(material)">
-              {{ material.category === 'video' ? '播放' : '查看' }}
+            <button class="btn btn-sm btn-primary" @click.stop="material.category === 'exam' ? openExamMaterial(material) : openMaterial(material)">
+              {{ material.category === 'video' ? '播放' : material.category === 'exam' ? '开始考试' : '查看' }}
             </button>
             <button class="btn btn-sm btn-error btn-outline" @click.stop="confirmDelete(material)">删除</button>
           </div>
@@ -632,7 +643,7 @@
           <button class="btn btn-ghost" @click="closeDeleteSubjectModal">取消</button>
           <button 
             class="btn btn-error" 
-            :disabled="deleteConfirmName !== deletingSubject?.name" 
+            :disabled="deleteConfirmName !== deletingSubject?.displayName" 
             @click="forceDeleteSubject"
           >
             <span v-if="deleting" class="loading loading-spinner loading-sm"></span>
@@ -678,6 +689,63 @@
         </div>
       </div>
       <div class="modal-backdrop" @click="showPreviewModal = false"></div>
+    </div>
+
+    <!-- 考试模式选择弹窗 -->
+    <div v-if="showExamModeModal" class="modal modal-open">
+      <div class="modal-box max-w-md bg-base-100">
+        <h3 class="font-bold text-lg mb-4">选择考试模式</h3>
+        <p class="text-base-content/70 mb-6">{{ selectedExamMaterial?.title }}</p>
+        
+        <div class="space-y-3">
+          <!-- 练习模式 -->
+          <button class="btn btn-block btn-outline justify-start" @click="startExamMode('practice')">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            <div class="text-left">
+              <div class="font-medium">练习模式</div>
+              <div class="text-xs opacity-60">即时反馈答题正确性</div>
+            </div>
+          </button>
+          
+          <!-- 考试模式 -->
+          <button class="btn btn-block btn-primary justify-start" @click="showTimeLimitSetting">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div class="text-left">
+              <div class="font-medium">考试模式</div>
+              <div class="text-xs opacity-80">计时考试，提交后统一批改</div>
+            </div>
+          </button>
+        </div>
+        
+        <!-- 考试时间设置 -->
+        <div v-if="showTimeLimitInput" class="mt-4 p-4 bg-base-200 rounded-lg space-y-3">
+          <div class="form-control">
+            <label class="label">
+              <span class="label-text font-medium">考试时长（分钟）</span>
+            </label>
+            <input type="number" v-model="customTimeLimit" min="1" max="300" 
+              class="input input-bordered w-full" placeholder="请输入考试时长">
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-sm" @click="customTimeLimit = 30">30分钟</button>
+            <button class="btn btn-sm" @click="customTimeLimit = 60">60分钟</button>
+            <button class="btn btn-sm" @click="customTimeLimit = 90">90分钟</button>
+            <button class="btn btn-sm" @click="customTimeLimit = 120">120分钟</button>
+          </div>
+          <button class="btn btn-primary w-full mt-2" @click="startExamMode('exam')">
+            开始考试
+          </button>
+        </div>
+        
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="closeExamModeModal">取消</button>
+        </div>
+      </div>
+      <div class="modal-backdrop" @click="closeExamModeModal"></div>
     </div>
 
     <!-- 阶段性测试设置弹窗 -->
@@ -743,10 +811,15 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span>
-              该学科题库共有 <strong>{{ questionBankStats.total }}</strong> 道题目
-              <span v-if="questionBankStats.byType">（单选:{{ questionBankStats.byType.single || 0 }} 多选:{{ questionBankStats.byType.multiple || 0 }} 填空:{{ questionBankStats.byType.fill || 0 }} 判断:{{ questionBankStats.byType.judge || 0 }}）</span>
-            </span>
+            <div class="flex flex-col">
+              <span>
+                该学科题库共有 <strong>{{ questionBankStats.total }}</strong> 道题目
+                <span v-if="questionBankStats.byType">（单选:{{ questionBankStats.byType.single || 0 }} 多选:{{ questionBankStats.byType.multiple || 0 }} 填空:{{ questionBankStats.byType.fill || 0 }} 判断:{{ questionBankStats.byType.judge || 0 }}）</span>
+              </span>
+              <span class="text-xs opacity-70">
+                提示：题目数量应不超过各题型的可用数量，系统会自动调整
+              </span>
+            </div>
           </div>
 
           <div v-if="examForm.generateMode === 'bank' && questionBankStats.total === 0 && examForm.subject" class="alert alert-warning alert-sm">
@@ -1027,6 +1100,13 @@ const deletingMaterial = ref(null)
 const showPreviewModal = ref(false)
 const previewMaterial = ref(null)
 
+// 考试模式选择
+const showExamModeModal = ref(false)
+const selectedExamMaterial = ref(null)
+const selectedExamData = ref(null)
+const showTimeLimitInput = ref(false)
+const customTimeLimit = ref(60)
+
 // AI 生成内容对话框
 const showGenerateModal = ref(false)
 const generateRequest = ref(null)
@@ -1136,6 +1216,9 @@ const generateExam = async () => {
   if (!canGenerateExam.value) return
 
   isGeneratingExam.value = true
+  let currentExamId = null
+  let currentTaskId = null
+  
   try {
     const response = await fetch(`${apiBaseUrl}/api/exams/generate`, {
       method: 'POST',
@@ -1148,14 +1231,29 @@ const generateExam = async () => {
 
     const data = await response.json()
     if (data.success) {
-      // 保存考试ID到本地存储，跳转到考试页面
+      currentExamId = data.data.examId
+      currentTaskId = data.data.taskId
+      
+      // 保存考试ID到本地存储
       localStorage.setItem('current_exam', JSON.stringify({
-        examId: data.data.examId,
+        examId: currentExamId,
         settings: examForm.value
       }))
+      
+      // 触发任务创建事件，让工作进度面板显示
+      window.dispatchEvent(new CustomEvent('task-created', { 
+        detail: { 
+          taskId: currentTaskId,
+          type: 'exam',
+          title: `生成${examForm.value.subject}阶段性测试`
+        } 
+      }))
+      
+      // 关闭弹窗
       closeExamModal()
-      // 跳转到考试页面
-      router.push('/exam')
+      
+      // 监听任务完成状态
+      pollTaskStatus(currentExamId, currentTaskId)
     } else {
       alert('生成考试失败: ' + (data.error || '未知错误'))
     }
@@ -1165,6 +1263,89 @@ const generateExam = async () => {
   } finally {
     isGeneratingExam.value = false
   }
+}
+
+// 轮询任务状态直到完成
+const pollTaskStatus = (examId, taskId) => {
+  const pollInterval = setInterval(async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/tasks/${taskId}`)
+      const data = await response.json()
+      
+      if (data.success && data.data) {
+        const task = data.data
+        
+        // 任务完成
+        if (task.status === 'completed') {
+          clearInterval(pollInterval)
+          
+          // 显示完成对话框
+          showExamGeneratedDialog(examId)
+          
+          // 刷新资料列表（同步到学习中心了）
+          loadMaterials()
+        }
+        
+        // 任务失败
+        if (task.status === 'failed') {
+          clearInterval(pollInterval)
+          alert('试卷生成失败: ' + (task.error || '未知错误'))
+        }
+      }
+    } catch (error) {
+      console.error('检查任务状态失败:', error)
+    }
+  }, 2000)
+  
+  // 最多轮询5分钟
+  setTimeout(() => {
+    clearInterval(pollInterval)
+  }, 300000)
+}
+
+// 考试生成完成对话框
+const showExamGeneratedDialog = (examId) => {
+  // 使用HTML对话框
+  const dialog = document.createElement('dialog')
+  dialog.className = 'modal'
+  dialog.innerHTML = `
+    <div class="modal-box">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      </form>
+      <div class="py-6 text-center">
+        <div class="text-6xl mb-4">✅</div>
+        <h3 class="font-bold text-xl mb-2">试卷生成完成</h3>
+        <p class="text-base-content/70 mb-6">您的阶段性测试试卷已经生成完毕，可以前往答题了！</p>
+        <p class="text-sm text-base-content/50 mb-6">试卷已同步保存到学习中心</p>
+        <div class="flex justify-center gap-3">
+          <button class="btn btn-ghost" onclick="this.closest('dialog').close()">
+            稍后再说
+          </button>
+          <button class="btn btn-primary" id="goToExamBtn">
+            前往答题
+          </button>
+        </div>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+      <button>close</button>
+    </form>
+  `
+  document.body.appendChild(dialog)
+  
+  // 绑定前往答题按钮
+  setTimeout(() => {
+    const btn = document.getElementById('goToExamBtn')
+    if (btn) {
+      btn.addEventListener('click', () => {
+        dialog.close()
+        router.push('/exam')
+      })
+    }
+  }, 100)
+  
+  dialog.showModal()
 }
 
 // 从题库生成考试
@@ -1184,6 +1365,22 @@ const generateExamFromBank = async () => {
 
     const data = await response.json()
     if (data.success) {
+      // 检查实际生成的题目数量是否与请求一致
+      const actualCounts = data.data.actualCounts || {}
+      const requestedCounts = examForm.value.questionCounts
+      const requestedTotal = Object.values(requestedCounts).reduce((a, b) => a + b, 0)
+      const actualTotal = Object.values(actualCounts).reduce((a, b) => a + b, 0)
+
+      // 如果数量不一致，给出提示
+      if (actualTotal < requestedTotal) {
+        const warningMsg = `题库中题目数量不足，已自动调整。\n` +
+          `请求: ${requestedTotal} 题\n` +
+          `实际生成: ${actualTotal} 题\n` +
+          `详情: 单选${actualCounts.single || 0} 多选${actualCounts.multiple || 0} 填空${actualCounts.fill || 0} 判断${actualCounts.judge || 0}`
+        console.warn(warningMsg)
+        // 显示警告（使用console或在UI中提示）
+      }
+
       // 保存考试ID到本地存储，跳转到考试页面
       localStorage.setItem('current_exam', JSON.stringify({
         examId: data.data.examId,
@@ -1335,7 +1532,7 @@ const closeDeleteSubjectModal = () => {
 
 // 强制删除学科
 const forceDeleteSubject = async () => {
-  if (deleteConfirmName.value !== deletingSubject.value?.name) return
+  if (deleteConfirmName.value !== deletingSubject.value?.displayName) return
   
   deleting.value = true
   try {
@@ -1431,7 +1628,7 @@ const selectSubject = (subject) => {
 
 // 获取分类文字
 const getCategoryText = (category) => {
-  const map = { video: '视频', document: '文档', ppt: 'PPT' }
+  const map = { video: '视频', document: '文档', ppt: 'PPT', exam: '考试' }
   return map[category] || category
 }
 
@@ -1801,7 +1998,24 @@ const deleteMaterial = async () => {
 // 打开/预览资料
 const openMaterial = (material) => {
   previewMaterial.value = material
-  
+
+  // 如果是考试类型，打开模式选择弹窗
+  if (material.category === 'exam') {
+    try {
+      const examData = JSON.parse(material.content || '{}')
+      if (examData.examId) {
+        selectedExamMaterial.value = material
+        selectedExamData.value = examData
+        showTimeLimitInput.value = false
+        customTimeLimit.value = examData.timeLimit || 60
+        showExamModeModal.value = true
+        return
+      }
+    } catch (e) {
+      console.error('解析考试数据失败:', e)
+    }
+  }
+
   // 如果是 md 文件，跳转到 markdown 页面
   if (material.url && material.url.toLowerCase().endsWith('.md')) {
     router.push({ 
@@ -1827,8 +2041,68 @@ const openMaterial = (material) => {
     })
     return
   }
-  
+
   showPreviewModal.value = true
+}
+
+// 打开考试资料（统一入口）
+const openExamMaterial = (material) => {
+  // 直接打开考试模式选择弹窗
+  selectedExamMaterial.value = material
+
+  // 尝试从 content 字段解析考试数据
+  let examData = {}
+  if (material.content) {
+    try {
+      examData = JSON.parse(material.content)
+    } catch (e) {
+      console.error('解析考试数据失败:', e)
+    }
+  }
+
+  // 如果有 examId，使用它；否则使用 material.id
+  if (examData.examId) {
+    selectedExamData.value = examData
+  } else {
+    // 尝试使用资料 ID 作为考试 ID
+    selectedExamData.value = { examId: material.id, ...examData }
+  }
+
+  showTimeLimitInput.value = false
+  customTimeLimit.value = examData.timeLimit || 60
+  showExamModeModal.value = true
+}
+
+// 关闭考试模式选择弹窗
+const closeExamModeModal = () => {
+  showExamModeModal.value = false
+  selectedExamMaterial.value = null
+  selectedExamData.value = null
+  showTimeLimitInput.value = false
+}
+
+// 显示时间限制设置
+const showTimeLimitSetting = () => {
+  showTimeLimitInput.value = true
+}
+
+// 开始考试
+const startExamMode = (mode) => {
+  if (!selectedExamData.value?.examId) return
+
+  localStorage.setItem('current_exam', JSON.stringify({
+    examId: selectedExamData.value.examId,
+    settings: {
+      subject: selectedExamMaterial.value?.subject,
+      mode: mode,
+      difficulty: selectedExamData.value.difficulty,
+      timeLimit: mode === 'exam' ? customTimeLimit.value : undefined,
+      enableTimeLimit: mode === 'exam'
+    }
+  }))
+
+  closeExamModeModal()
+  router.push('/exam')
 }
 
 onMounted(() => {

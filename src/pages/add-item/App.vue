@@ -250,7 +250,7 @@ const getPriorityClass = (priority) => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-base-100 via-base-100 to-base-200 pt-16 px-4 pb-8">
+  <div class="h-full bg-gradient-to-br from-base-100 via-base-100 to-base-200 px-4 pb-8 overflow-y-auto">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between mb-6">
       <div class="flex items-center gap-4">

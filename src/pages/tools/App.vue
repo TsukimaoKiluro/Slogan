@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-base-100 p-6">
+  <div class="h-full bg-base-100 p-6 overflow-y-auto">
     <div class="max-w-6xl mx-auto">
       <!-- 页面标题 -->
       <div class="mb-8">

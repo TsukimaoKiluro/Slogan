@@ -1,28 +1,5 @@
 <template>
-  <div class="error-book-container min-h-screen bg-base-200">
-    <!-- 顶部导航栏 -->
-    <div class="navbar bg-base-100 shadow-lg sticky top-0 z-50">
-      <div class="navbar-start">
-        <button class="btn btn-ghost btn-circle" @click="goBack">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-        </button>
-        <div class="ml-2">
-          <h1 class="text-lg font-bold">错题本</h1>
-          <p class="text-sm text-base-content/60">整理错题，针对性复习</p>
-        </div>
-      </div>
-      <div class="navbar-end gap-2">
-        <button class="btn btn-primary btn-sm" @click="startReview">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-          今日复习 ({{ stats.todayReview }})
-        </button>
-      </div>
-    </div>
-
+  <div class="error-book-container h-full bg-base-200">
     <!-- 统计卡片 -->
     <div class="container mx-auto p-4">
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">

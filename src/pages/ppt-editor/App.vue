@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-[calc(100vh-4rem)] bg-base-200">
+  <div class="flex h-full bg-base-200">
     <!-- 左侧模板面板 -->
     <div class="w-80 bg-base-100 border-r border-base-300 flex flex-col">
       <div class="p-4 border-b border-base-300">

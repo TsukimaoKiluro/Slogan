@@ -1,5 +1,5 @@
 <template>
-  <div class="min-h-screen bg-base-100 pt-16 px-4">
+  <div class="h-full bg-base-100 px-4">
     <!-- 沉浸模式 -->
     <div v-if="immersiveMode" class="h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-gradient-to-br from-primary/5 via-base-100 to-secondary/5">
       <div class="text-center">

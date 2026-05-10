@@ -1,6 +1,6 @@
 <template>
-  <div class="min-h-screen bg-base-100 flex items-center justify-center p-4">
-    <div class="w-full max-w-6xl h-[90vh] shadow-2xl rounded-2xl overflow-hidden bg-base-200 flex flex-col">
+  <div class="h-full bg-base-100 flex items-center justify-center p-4">
+    <div class="w-full max-w-6xl h-full shadow-2xl rounded-2xl overflow-hidden bg-base-200 flex flex-col">
       <!-- 顶部导航栏 -->
       <div class="navbar bg-primary text-primary-content shadow-lg px-4">
         <div class="flex-1">

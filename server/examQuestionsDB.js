@@ -200,8 +200,15 @@ export function generateExamQuestions(subject, questionCounts = {}, difficulty =
     // 排除已使用的题目
     typeQuestions = typeQuestions.filter(q => !usedIds.has(q.id))
 
-    // 随机选择指定数量
-    const selected = shuffleArray(typeQuestions).slice(0, count)
+    // 如果筛选后题目数量不足指定数量，尝试从其他难度补充（题库题目不足时）
+    let selected = shuffleArray(typeQuestions).slice(0, count)
+    if (selected.length < count && difficulty !== 'mixed') {
+      // 从所有难度中补充（排除已选题目）
+      const allTypeQuestions = allQuestions.filter(q => q.type === type && !usedIds.has(q.id))
+      const additionalNeeded = count - selected.length
+      const additional = shuffleArray(allTypeQuestions).slice(0, additionalNeeded)
+      selected = [...selected, ...additional]
+    }
 
     for (const q of selected) {
       usedIds.add(q.id)
@@ -222,6 +229,16 @@ export function generateExamQuestions(subject, questionCounts = {}, difficulty =
 
   // 打乱题目顺序
   const shuffledQuestions = shuffleArray(result)
+
+  // 检查是否生成了任何题目
+  if (shuffledQuestions.length === 0) {
+    return {
+      success: false,
+      message: `学科 "${subject}" 题库中没有足够的题目，请先添加题目或使用AI生成`,
+      questions: [],
+      totalScore: 0
+    }
+  }
 
   return {
     success: true,

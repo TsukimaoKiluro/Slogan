@@ -6,7 +6,7 @@ import { dirname, join } from 'path'
 import { existsSync, mkdirSync, unlinkSync } from 'fs'
 import fsPromises from 'fs/promises'
 import path from 'path'
-import { initDatabase, db, sessionDB, messageDB, fileDB, profileDB, knowledgeDB, cognitiveStyleDB, errorPointDB, errorBookDB, goalDB, interestDB, studyRecordDB, learningMaterialDB, subjectDB, todoDB, scheduleDB, pptTemplateDB, aiTaskDB, examDB } from './database.js'
+import { initDatabase, db, saveDatabase, sessionDB, messageDB, fileDB, profileDB, knowledgeDB, cognitiveStyleDB, errorPointDB, errorBookDB, goalDB, interestDB, studyRecordDB, learningMaterialDB, subjectDB, todoDB, scheduleDB, pptTemplateDB, aiTaskDB, examDB } from './database.js'
 import { registerPptxPluginRoutes } from './plugins/pptxgen/index.js'
 import { getPromptContent } from './plugins/prompts/index.js'
 import * as examQuestionsDB from './examQuestionsDB.js'
@@ -17,59 +17,292 @@ const __dirname = dirname(__filename)
 const app = express()
 const PORT = process.env.PORT || 3001
 
+// ============ 任务队列系统 ============
+let taskQueue = []
+let isProcessing = false
+let currentTask = null
+
+// 处理队列中的任务
+async function processQueue() {
+  if (isProcessing || taskQueue.length === 0) return
+  
+  const next = taskQueue.shift()
+  if (!next) return
+  
+  isProcessing = true
+  currentTask = next
+  
+  try {
+    await next.processFn()
+    next.resolve({ success: true })
+  } catch (error) {
+    next.reject(error)
+  } finally {
+    isProcessing = false
+    currentTask = null
+    // 处理下一个任务
+    setImmediate(processQueue)
+  }
+}
+
+// 添加任务到队列
+function addToQueue(processFn) {
+  return new Promise((resolve, reject) => {
+    const task = { processFn, resolve, reject }
+    taskQueue.push(task)
+    
+    // 如果没有正在处理的任务，立即开始处理
+    if (!isProcessing) {
+      processQueue()
+    }
+  })
+}
+
+// 获取队列状态
+function getQueueStatus() {
+  return {
+    queueLength: taskQueue.length,
+    isProcessing,
+    currentTaskId: currentTask?.taskId || null
+  }
+}
+
 // ============ 学科自动识别函数 ============
 /**
  * 根据标题或内容自动识别学科
- * 从数据库获取学科信息进行模糊匹配
+ * 优先读取学习中心的已有科目，精确匹配后使用，否则使用 AI 新建
  * @param {string} text - 标题或内容
+ * @param {Object} apiConfig - API 配置（用于 AI 智能识别）
  * @returns {Promise<{subject: string, isNew: boolean}>} 学科名称及是否为新学科
  */
-async function autoDetectSubject(text) {
+async function autoDetectSubject(text, apiConfig = null) {
   if (!text) return { subject: 'major', isNew: false }
 
-  // 使用模糊搜索查找匹配的学科
-  const matches = subjectDB.fuzzySearch(text)
+  // 获取学习中心所有已有的学科
+  const existingSubjects = subjectDB.getAll(false) // 获取所有学科（包括禁用的）
 
+  // 1. 优先精确匹配已有学科的 display_name
+  for (const subject of existingSubjects) {
+    const displayName = subject.display_name || subject.displayName
+    if (displayName && text.includes(displayName)) {
+      return { subject: subject.name, isNew: false, displayName }
+    }
+  }
+
+  // 2. 精确匹配已有学科的 name
+  for (const subject of existingSubjects) {
+    if (subject.name && text.includes(subject.name)) {
+      return { subject: subject.name, isNew: false }
+    }
+  }
+
+  // 3. 使用模糊搜索查找匹配的学科
+  const matches = subjectDB.fuzzySearch(text)
   if (matches.length > 0) {
-    // 返回匹配度最高的学科
     return { subject: matches[0].name, isNew: false }
   }
 
-  // 没有匹配到，尝试从学科名称的拼音首字母或关键词生成新学科
-  const newSubjectName = generateSubjectName(text)
-
-  // 检查新学科是否已存在
-  const existing = subjectDB.get(newSubjectName.name)
-  if (existing) {
-    return { subject: existing.name, isNew: false }
+  // 4. 生成候选学科名称，使用 AI 智能判断
+  const generatedSubject = await generateSubjectName(text, apiConfig)
+  const candidateName = generatedSubject.name
+  const candidateDisplayName = generatedSubject.displayName
+  
+  // 检查生成的名称或相似名称是否已存在
+  const existingByName = subjectDB.get(candidateName)
+  if (existingByName) {
+    return { subject: existingByName.name, isNew: false }
+  }
+  
+  // 模糊匹配生成的显示名称
+  for (const subject of existingSubjects) {
+    const displayName = subject.display_name || subject.displayName
+    // 检查首字或关键词是否匹配
+    if (displayName && (displayName.startsWith(candidateDisplayName.charAt(0)) || 
+        candidateDisplayName.startsWith(displayName.charAt(0)))) {
+      return { subject: subject.name, isNew: false }
+    }
   }
 
-  // 添加新学科
+  // 5. 检查是否有学科的关键词匹配（增强版：支持双向包含匹配）
+  for (const subject of existingSubjects) {
+    const keywords = (subject.keywords || '').split(',')
+    for (const keyword of keywords) {
+      const trimmedKeyword = keyword.trim()
+      if (trimmedKeyword) {
+        // 关键词在文本中（完整匹配）
+        if (text.includes(trimmedKeyword)) {
+          return { subject: subject.name, isNew: false }
+        }
+        // 文本中的每个词都与关键词有部分匹配（防止"计算机网络"无法匹配"网络"的情况）
+        const textWords = text.split(/[\s,，、。.!？!?]+/).filter(w => w.length >= 2)
+        for (const word of textWords) {
+          // 关键词包含词，或词包含关键词
+          if (trimmedKeyword.includes(word) || word.includes(trimmedKeyword)) {
+            return { subject: subject.name, isNew: false }
+          }
+          // 关键词和词的首字相同（简化的中文匹配）
+          if (trimmedKeyword.length >= 2 && word.length >= 2 && 
+              trimmedKeyword.charAt(0) === word.charAt(0) && 
+              (trimmedKeyword.includes(word.charAt(1)) || word.includes(trimmedKeyword.charAt(1)))) {
+            return { subject: subject.name, isNew: false }
+          }
+        }
+      }
+    }
+  }
+
+  // 6. 确实没有匹配的学科，创建新学科
   try {
+    // 再次检查是否已存在（防止并发创建）
+    const existingFinal = subjectDB.get(candidateName)
+    if (existingFinal) {
+      return { subject: existingFinal.name, isNew: false }
+    }
+    
     subjectDB.add(
-      newSubjectName.name,
-      newSubjectName.displayName,
+      candidateName,
+      candidateDisplayName,
       'book',
       'primary',
       99,
-      newSubjectName.name // 新学科的关键词就是自己的名称
+      candidateName // 新学科的关键词就是自己的名称
     )
     // 同步初始化 knowledge_base
-    knowledgeDB.init('default', newSubjectName.name)
-    return { subject: newSubjectName.name, isNew: true }
+    knowledgeDB.init('default', candidateName)
+    return { subject: candidateName, isNew: true }
   } catch (e) {
     console.error('自动创建学科失败:', e)
+    // 如果创建失败，检查是否其他进程已创建
+    const existing = subjectDB.get(candidateName)
+    if (existing) {
+      return { subject: existing.name, isNew: false }
+    }
     // 返回默认学科
     return { subject: 'major', isNew: false }
   }
 }
 
 /**
- * 根据文本生成学科名称
+ * 使用 AI 智能判断学科名称
+ * @param {string} text - 文本（文档标题或内容）
+ * @param {Object} apiConfig - API 配置
+ * @returns {Promise<{name: string, displayName: string}>}
+ */
+async function generateSubjectNameWithAI(text, apiConfig) {
+  // 如果没有 API 配置，使用默认规则
+  if (!apiConfig?.apiKey) {
+    return generateSubjectNameFallback(text)
+  }
+
+  const subjectIdentificationPrompt = `你是一个学科分类专家。请根据以下文档标题或内容，判断它属于哪个学科。
+
+请分析标题/内容，提取准确的学科名称。
+
+## 常见学科参考（但不限于）：
+- 编程语言：C#、Python、Java、JavaScript、Go、Rust、PHP、Ruby、C++、TypeScript、Swift、Kotlin 等
+- 前端技术：HTML、CSS、Vue、React、Angular、前端开发、Web开发
+- 后端技术：Node.js、Spring、Django、Flask、Express、后端开发
+- 数据科学：机器学习、深度学习、数据分析、大数据、数据挖掘
+- 数据库：MySQL、PostgreSQL、MongoDB、Redis、SQL
+- 运维/DevOps：Docker、Kubernetes、Linux、云计算、CI/CD
+- 网络安全：网络安全、信息安全、密码学
+- 数学：高等数学、线性代数、概率论、离散数学
+- 物理：力学、电磁学、量子物理
+- 其他：算法、数据结构、设计模式、操作系统、编译原理、计算机网络
+
+## 分析要求：
+1. 如果标题是"C#核心特性全景图"，应该识别为"C#"
+2. 如果标题是"Python机器学习实战"，应该识别为"机器学习"或"Python"
+3. 如果标题是"线性代数期末复习"，应该识别为"线性代数"
+4. 如果无法确定，返回一个通用的学科名称
+
+请直接返回 JSON 格式（不带 markdown 代码块）：
+{"subject": "学科名称", "reason": "判断理由"}
+
+文档标题/内容：${text.substring(0, 500)}`
+
+  try {
+    const messages = [
+      { role: 'user', content: subjectIdentificationPrompt }
+    ]
+    
+    const result = await callAIApi(messages, apiConfig, { stream: false, maxTokens: 500 })
+    
+    // 解析 AI 返回的 JSON
+    let cleanResult = result.trim()
+    // 移除可能的 markdown 代码块
+    if (cleanResult.startsWith('```')) {
+      cleanResult = cleanResult.replace(/^```json?\s*/i, '').replace(/\s*```$/, '')
+    }
+    
+    const parsed = JSON.parse(cleanResult)
+    const subjectName = parsed.subject?.trim()
+    
+    if (subjectName && subjectName.length >= 1 && subjectName.length <= 30) {
+      // 生成英文标识（用于数据库）
+      const name = generateSubjectIdentifier(subjectName)
+      return {
+        name,
+        displayName: subjectName
+      }
+    }
+  } catch (e) {
+    console.error('AI 学科识别失败，使用默认规则:', e.message)
+  }
+  
+  // 如果 AI 识别失败，使用默认规则
+  return generateSubjectNameFallback(text)
+}
+
+/**
+ * 生成学科英文标识
+ * @param {string} displayName - 显示名称
+ * @returns {string}
+ */
+function generateSubjectIdentifier(displayName) {
+  // 常见的学科名称映射
+  const commonMappings = {
+    'c#': 'csharp', 'c++': 'cpp', 'c语言': 'c',
+    'python': 'python', 'java': 'java', 'javascript': 'javascript',
+    'html': 'html', 'css': 'css', 'vue': 'vue', 'react': 'react',
+    'typescript': 'typescript', 'node.js': 'nodejs', 'node': 'nodejs',
+    '机器学习': 'ml', '深度学习': 'dl', '人工智能': 'ai',
+    '数据库': 'db', 'mysql': 'mysql', 'mongodb': 'mongodb',
+    'linux': 'linux', 'docker': 'docker', 'kubernetes': 'k8s',
+    '数据结构': 'ds', '算法': 'algo', '计算机网络': 'network',
+    '操作系统': 'os', '离散数学': 'discrete', '线性代数': 'linalg',
+    '高等数学': 'calculus', '概率论': 'probability'
+  }
+  
+  const lower = displayName.toLowerCase()
+  for (const [key, value] of Object.entries(commonMappings)) {
+    if (lower.includes(key) || key.includes(lower)) {
+      return value
+    }
+  }
+  
+  // 如果没有匹配，提取英文或拼音首字母
+  let identifier = ''
+  for (const char of displayName) {
+    if (/[a-zA-Z]/.test(char)) {
+      identifier += char.toLowerCase()
+    }
+  }
+  
+  if (!identifier) {
+    // 纯中文，使用首字拼音首字母（简化处理）
+    identifier = displayName.charAt(0)
+  }
+  
+  return identifier.replace(/[^a-z0-9]/g, '').substring(0, 20) || 'subject'
+}
+
+/**
+ * 根据文本生成学科名称（备用规则）
  * @param {string} text - 文本
  * @returns {{name: string, displayName: string}}
  */
-function generateSubjectName(text) {
+function generateSubjectNameFallback(text) {
   // 清理文本，只保留中文、英文和数字
   let cleaned = text.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, ' ')
     .trim()
@@ -84,33 +317,20 @@ function generateSubjectName(text) {
   // 生成显示名称（取前两个词）
   const displayName = cleaned.slice(0, 2).join('')
 
-  // 生成英文标识（拼音首字母或英文单词）
-  let name = ''
-  for (const word of cleaned) {
-    if (/[a-zA-Z]/.test(word)) {
-      // 如果是英文，取前4个字符
-      name = word.substring(0, 4).toLowerCase().replace(/\s/g, '')
-      break
-    } else if (/[\u4e00-\u9fa5]/.test(word)) {
-      // 如果是中文，取单字拼音首字母（简化处理）
-      // 这里用中文字符作为标识的一部分
-      name += word.charAt(0)
-    }
-  }
-
-  if (!name) {
-    name = cleaned[0].substring(0, 10).toLowerCase()
-  }
-
-  // 清理名称，只保留字母和数字
-  name = name.replace(/[^a-z0-9]/g, '').substring(0, 20)
-
-  // 确保名称不为空
-  if (!name) {
-    name = 'subject_' + Date.now()
-  }
+  // 生成英文标识
+  const name = generateSubjectIdentifier(displayName)
 
   return { name, displayName }
+}
+
+/**
+ * 根据文本生成学科名称（同步版本，内部调用 AI 版本）
+ * @param {string} text - 文本
+ * @param {Object} apiConfig - API 配置（可选）
+ * @returns {Promise<{name: string, displayName: string}>}
+ */
+async function generateSubjectName(text, apiConfig = null) {
+  return await generateSubjectNameWithAI(text, apiConfig)
 }
 
 // ============ 中间件 ============
@@ -575,36 +795,96 @@ app.post('/api/chat/stream', async (req, res) => {
   }
 })
 
-// ============ 内容生成 API（用于生成PPT、MD笔记、视频脚本） ============
-app.post('/api/generate', async (req, res) => {
+// ============ 检查生成记录是否存在（键值检查） ============
+app.post('/api/generate/check', async (req, res) => {
   try {
-    const { prompt, type, apiConfig, title, taskId } = req.body
+    const { prompt, type } = req.body
 
-    if (!prompt) {
-      return res.status(400).json({ success: false, error: '生成提示不能为空' })
+    if (!prompt || !type) {
+      return res.status(400).json({ success: false, error: '缺少必要参数' })
     }
 
-    if (!apiConfig?.apiKey) {
-      return res.status(400).json({ success: false, error: '请先在设置中配置内容生成API' })
-    }
+    // 生成唯一键值：标题 + 类型
+    const uniqueKey = `${prompt}_${type}`
 
-    // 如果提供了 taskId，更新任务状态
-    const updateTask = (status, progress, result = null, error = null) => {
-      if (taskId) {
-        try {
-          aiTaskDB.updateStatus(taskId, status, progress, result, error)
-        } catch (e) {
-          console.error('更新任务失败:', e)
+    // 从数据库中查找匹配的学习资料（通过标题模糊匹配）
+    const allMaterials = learningMaterialDB.getAll()
+    const categoryMap = { 'ppt': 'ppt', 'md': 'document', 'video': 'video' }
+    const targetCategory = categoryMap[type] || 'document'
+
+    // 查找匹配的资料
+    const existingMaterial = allMaterials.find(m =>
+      m.title === prompt && m.category === targetCategory
+    )
+
+    if (existingMaterial) {
+      res.json({
+        success: true,
+        data: {
+          exists: true,
+          uniqueKey,
+          materialId: existingMaterial.id,
+          filePath: existingMaterial.file_path || existingMaterial.original_name,
+          title: existingMaterial.title,
+          category: existingMaterial.category,
+          createdAt: existingMaterial.created_at
         }
+      })
+    } else {
+      res.json({
+        success: true,
+        data: {
+          exists: false,
+          uniqueKey
+        }
+      })
+    }
+  } catch (error) {
+    console.error('检查生成记录失败:', error)
+    res.status(500).json({ success: false, error: '检查失败' })
+  }
+})
+
+// ============ 内容生成 API（用于生成PPT、MD笔记、视频脚本，支持任务队列） ============
+app.post('/api/generate', async (req, res) => {
+  const { prompt, type, apiConfig, title, taskId } = req.body
+
+  if (!prompt) {
+    return res.status(400).json({ success: false, error: '生成提示不能为空' })
+  }
+
+  if (!apiConfig?.apiKey) {
+    return res.status(400).json({ success: false, error: '请先在设置中配置内容生成API' })
+  }
+
+  // 如果提供了 taskId，更新任务状态
+  const updateTask = (status, progress, result = null, error = null) => {
+    if (taskId) {
+      try {
+        aiTaskDB.updateStatus(taskId, status, progress, result, error)
+      } catch (e) {
+        console.error('更新任务失败:', e)
       }
     }
+  }
 
-    // 更新任务状态为处理中
-    updateTask('processing', 10)
+  // 包装响应以便在队列中使用
+  let responseSent = false
+  const sendResponse = (data, statusCode = 200) => {
+    if (responseSent) return
+    responseSent = true
+    res.status(statusCode).json(data)
+  }
 
-    // 根据类型设置系统提示
-    const systemPrompts = {
-      ppt: `你是一个专业的PPT内容整理助手。请根据用户提供的需求，生成一份PPT的文本大纲内容。
+  // 将任务添加到队列
+  addToQueue(async () => {
+    try {
+      // 更新任务状态为处理中
+      updateTask('processing', 10)
+
+      // 根据类型设置系统提示
+      const systemPrompts = {
+        ppt: `你是一个专业的PPT内容整理助手。请根据用户提供的需求，生成一份PPT的文本大纲内容。
 要求：
 1. 输出格式为PPT大纲，每页用"## 第X页：[标题]"开头
 2. 每页包含标题和3-5个要点
@@ -612,7 +892,7 @@ app.post('/api/generate', async (req, res) => {
 4. 总共10-12页
 5. 结尾可以添加"## 总结"页面
 直接输出内容，不要额外说明。`,
-      md: `你是一个专业的Markdown笔记整理助手。请根据用户提供的需求，生成一份结构化的Markdown笔记。
+        md: `你是一个专业的Markdown笔记整理助手。请根据用户提供的需求，生成一份结构化的Markdown笔记。
 要求：
 1. 使用标准Markdown格式
 2. 包含标题、目录、各级标题
@@ -621,7 +901,7 @@ app.post('/api/generate', async (req, res) => {
 5. 包含代码示例（如果适用）
 6. 结尾要有总结和练习题
 直接输出笔记内容，不要额外说明。`,
-      video: `你是一个专业的视频脚本整理助手。请根据用户提供的需求，生成一份视频脚本。
+        video: `你是一个专业的视频脚本整理助手。请根据用户提供的需求，生成一份视频脚本。
 要求：
 1. 包含开场白、主体内容、结尾
 2. 每个部分标注时间（如"[00:00-00:30] 开头介绍"）
@@ -629,143 +909,160 @@ app.post('/api/generate', async (req, res) => {
 4. 适当使用比喻和例子
 5. 结尾有总结和互动引导
 直接输出脚本内容，不要额外说明。`
-    }
-
-    const systemPrompt = systemPrompts[type] || systemPrompts.md
-    const typeNames = { ppt: 'PPT', md: 'Markdown笔记', video: '视频脚本' }
-
-    // 调用 AI API
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: prompt }
-    ]
-
-    updateTask('processing', 30)
-    const content = await callAIApi(messages, apiConfig)
-    const timestamp = Date.now()
-
-    updateTask('processing', 50)
-
-    // PPT 类型：生成真正的 PPT 文件
-    if (type === 'ppt') {
-      updateTask('processing', 60)
-      const pptFilename = `${timestamp}_${(title || prompt).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}.pptx`
-      const pptDir = join(uploadsDir, 'ppt')
-      if (!existsSync(pptDir)) {
-        mkdirSync(pptDir, { recursive: true })
       }
-      const pptPath = join(pptDir, pptFilename)
 
-      // 使用 pptxgen 生成 PPT
-      const { createPptFromMarkdown } = await import('./plugins/pptxgen/index.js')
-      await createPptFromMarkdown(content, {
-        title: title || prompt,
-        author: 'AI PPT Generator',
-        outputPath: pptPath
-      })
+      const systemPrompt = systemPrompts[type] || systemPrompts.md
+      const typeNames = { ppt: 'PPT', md: 'Markdown笔记', video: '视频脚本' }
 
-      updateTask('processing', 80)
+      // 调用 AI API
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+      ]
 
-      // 保存到大纲文件（用于查看）
-      const outlineFilename = `${timestamp}_outline.md`
-      const outlinePath = join(pptDir, outlineFilename)
-      await fsPromises.writeFile(outlinePath, content, 'utf-8')
+      updateTask('processing', 30)
+      const content = await callAIApi(messages, apiConfig)
+      const timestamp = Date.now()
 
-      // 导入到学习中心 - 自动识别学科
-      const { subject: detectedSubject, isNew: isNewSubject } = await autoDetectSubject(title || prompt)
+      updateTask('processing', 50)
+
+      // PPT 类型：生成真正的 PPT 文件
+      if (type === 'ppt') {
+        updateTask('processing', 60)
+        const pptFilename = `${timestamp}_${(title || prompt).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}.pptx`
+        const pptDir = join(uploadsDir, 'ppt')
+        if (!existsSync(pptDir)) {
+          mkdirSync(pptDir, { recursive: true })
+        }
+        const pptPath = join(pptDir, pptFilename)
+
+        // 使用 pptxgen 生成 PPT
+        const { createPptFromMarkdown } = await import('./plugins/pptxgen/index.js')
+        await createPptFromMarkdown(content, {
+          title: title || prompt,
+          author: 'AI PPT Generator',
+          outputPath: pptPath
+        })
+
+        updateTask('processing', 80)
+
+        // 保存到大纲文件（用于查看）
+        const outlineFilename = `${timestamp}_outline.md`
+        const outlinePath = join(pptDir, outlineFilename)
+        await fsPromises.writeFile(outlinePath, content, 'utf-8')
+
+        // 导入到学习中心 - 自动识别学科（使用 AI 智能判断）
+        const { subject: detectedSubject, isNew: isNewSubject } = await autoDetectSubject(title || prompt, apiConfig)
+        const materialId = learningMaterialDB.add(
+          title || prompt,
+          '由 AI 自动生成的 PPT 演示文稿',
+          `/uploads/ppt/${pptFilename}`,
+          pptFilename,
+          'ppt',
+          detectedSubject,
+          'medium',
+          0,
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        )
+
+        // 更新任务完成
+        updateTask('completed', 100, JSON.stringify({
+          type: 'ppt',
+          filePath: `/uploads/ppt/${pptFilename}`,
+          slideCount: (content.match(/## 第\d+页/gi) || []).length
+        }))
+
+        sendResponse({
+          success: true,
+          data: {
+            type: 'ppt',
+            content,
+            filename: pptFilename,
+            filePath: `/uploads/ppt/${pptFilename}`,
+            materialId,
+            slideCount: (content.match(/## 第\d+页/gi) || []).length,
+            uniqueKey: `${title || prompt}_ppt`
+          }
+        })
+        return
+      }
+
+      // MD / Video 类型：保存为 Markdown 文件
+      updateTask('processing', 70)
+      const categoryMap = { md: 'docs', video: 'docs' }
+      const category = categoryMap[type] || 'docs'
+      const filename = `${timestamp}.md`
+      const targetDir = join(uploadsDir, category)
+      if (!existsSync(targetDir)) {
+        mkdirSync(targetDir, { recursive: true })
+      }
+      const filePath = join(targetDir, filename)
+      await fsPromises.writeFile(filePath, content, 'utf-8')
+      const stats = await fsPromises.stat(filePath)
+
+      updateTask('processing', 90)
+
+      // 导入到学习中心 - 自动识别学科（使用 AI 智能判断）
+      const { subject: detectedSubject, isNew: isNewSubject } = await autoDetectSubject(title || prompt, apiConfig)
       const materialId = learningMaterialDB.add(
         title || prompt,
-        '由 AI 自动生成的 PPT 演示文稿',
-        `/uploads/ppt/${pptFilename}`,
-        pptFilename,
-        'ppt',
+        `由 AI 自动生成的 ${type === 'md' ? 'Markdown' : '视频'} 内容`,
+        `/uploads/${category}/${filename}`,
+        filename,
+        type === 'md' ? 'document' : 'document',
         detectedSubject,
         'medium',
-        0,
-        'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        stats.size,
+        'text/markdown'
       )
 
       // 更新任务完成
       updateTask('completed', 100, JSON.stringify({
-        type: 'ppt',
-        filePath: `/uploads/ppt/${pptFilename}`,
-        slideCount: (content.match(/## 第\d+页/gi) || []).length
+        type,
+        filePath: `/uploads/${category}/${filename}`,
+        size: stats.size
       }))
 
-      res.json({
+      sendResponse({
         success: true,
         data: {
-          type: 'ppt',
+          type,
           content,
-          filename: pptFilename,
-          filePath: `/uploads/ppt/${pptFilename}`,
+          filename,
+          filePath: `/uploads/${category}/${filename}`,
+          category,
+          size: stats.size,
           materialId,
-          slideCount: (content.match(/## 第\d+页/gi) || []).length
+          uniqueKey: `${title || prompt}_${type}`
         }
       })
-      return
-    }
-
-    // MD / Video 类型：保存为 Markdown 文件
-    updateTask('processing', 70)
-    const categoryMap = { md: 'docs', video: 'docs' }
-    const category = categoryMap[type] || 'docs'
-    const filename = `${timestamp}.md`
-    const targetDir = join(uploadsDir, category)
-    if (!existsSync(targetDir)) {
-      mkdirSync(targetDir, { recursive: true })
-    }
-    const filePath = join(targetDir, filename)
-    await fsPromises.writeFile(filePath, content, 'utf-8')
-    const stats = await fsPromises.stat(filePath)
-
-    updateTask('processing', 90)
-
-    // 导入到学习中心 - 自动识别学科
-    const { subject: detectedSubject, isNew: isNewSubject } = await autoDetectSubject(title || prompt)
-    const materialId = learningMaterialDB.add(
-      title || prompt,
-      `由 AI 自动生成的 ${type === 'md' ? 'Markdown' : '视频'} 内容`,
-      `/uploads/${category}/${filename}`,
-      filename,
-      type === 'md' ? 'document' : 'document',
-      detectedSubject,
-      'medium',
-      stats.size,
-      'text/markdown'
-    )
-
-    // 更新任务完成
-    updateTask('completed', 100, JSON.stringify({
-      type,
-      filePath: `/uploads/${category}/${filename}`,
-      size: stats.size
-    }))
-
-    res.json({
-      success: true,
-      data: {
-        type,
-        content,
-        filename,
-        filePath: `/uploads/${category}/${filename}`,
-        category,
-        size: stats.size,
-        materialId
+    } catch (error) {
+      console.error('内容生成失败:', error)
+      // 更新任务失败状态
+      if (taskId) {
+        try {
+          aiTaskDB.updateStatus(taskId, 'failed', 0, null, error.message)
+        } catch (e) {
+          console.error('更新任务失败状态失败:', e)
+        }
       }
-    })
-  } catch (error) {
-    console.error('内容生成失败:', error)
-    // 更新任务失败状态
-    if (req.body.taskId) {
-      try {
-        aiTaskDB.updateStatus(req.body.taskId, 'failed', 0, null, error.message)
-      } catch (e) {
-        console.error('更新任务失败状态失败:', e)
-      }
+      sendResponse({ success: false, error: '生成失败: ' + error.message }, 500)
     }
-    res.status(500).json({ success: false, error: '生成失败: ' + error.message })
-  }
+  }).catch(error => {
+    console.error('任务队列执行失败:', error)
+    if (!responseSent) {
+      sendResponse({ success: false, error: '任务执行失败: ' + error.message }, 500)
+    }
+  })
+})
+
+// 获取任务队列状态
+app.get('/api/tasks/queue', (req, res) => {
+  const status = getQueueStatus()
+  res.json({
+    success: true,
+    data: status
+  })
 })
 
 // ============ 文件上传 API ============
@@ -862,13 +1159,17 @@ const getProviderConfig = (provider) => {
       endpoint: 'https://api.siliconflow.cn/v1/chat/completions',
       model: 'Qwen/Qwen2.5-7B-Instruct'
     },
+    dashscope: {
+      endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+      model: 'qwen-plus'
+    },
     openai: {
       endpoint: 'https://api.openai.com/v1/chat/completions',
-      model: 'gpt-4'
+      model: 'gpt-4o'
     },
     claude: {
-      endpoint: 'https://api.anthropic.com/v1/chat/completions',
-      model: 'claude-3-opus-20240229'
+      endpoint: 'https://api.anthropic.com/v1/messages',
+      model: 'claude-3-5-sonnet-20241022'
     },
     gemini: {
       endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
@@ -897,6 +1198,53 @@ app.get('/api/system/info', (req, res) => {
       }
     }
   })
+})
+
+// ============ API 测试路由 ============
+// 测试 API 连接是否正常，并验证模型是否可用
+app.post('/api/test-api', async (req, res) => {
+  try {
+    const { apiConfig } = req.body
+    
+    if (!apiConfig?.apiKey) {
+      return res.status(400).json({ 
+        success: false, 
+        error: '请提供 API 密钥' 
+      })
+    }
+
+    // 构建测试消息
+    const testMessages = [
+      { role: 'user', content: '你好，请回复"测试成功"' }
+    ]
+
+    // 调用 AI API（不流式）
+    const result = await callAIApi(testMessages, apiConfig, {
+      stream: false
+    })
+
+    if (result && result.trim()) {
+      res.json({
+        success: true,
+        message: 'API 连接成功！',
+        model: apiConfig.model,
+        provider: apiConfig.provider,
+        response: result.substring(0, 200) // 限制响应长度
+      })
+    } else {
+      res.status(400).json({
+        success: false,
+        error: 'API 返回为空，可能模型不支持'
+      })
+    }
+  } catch (error) {
+    console.error('API 测试失败:', error)
+    res.status(400).json({
+      success: false,
+      error: 'API 连接失败：' + error.message,
+      hint: '请检查 API 密钥和模型名称是否正确'
+    })
+  }
 })
 
 // ============ 个人面板 API ============
@@ -1439,6 +1787,90 @@ app.get('/api/learning/materials', (req, res) => {
           fileSize: m.file_size,
           mimeType: m.mime_type,
           url,
+          createdAt: m.created_at,
+          // 对于考试资料，file_path 实际存储的是考试数据（JSON）
+          content: m.category === 'exam' ? m.file_path : undefined
+        }
+      })
+    })
+  } catch (error) {
+    console.error('获取学习资料失败:', error)
+    res.status(500).json({ success: false, error: '获取学习资料失败' })
+  }
+})
+
+// 搜索学习资料
+app.get('/api/learning/search', (req, res) => {
+  try {
+    const { keyword, category } = req.query
+    
+    if (!keyword) {
+      return res.status(400).json({ success: false, error: '请提供搜索关键词' })
+    }
+    
+    const materials = learningMaterialDB.searchByTitle(keyword, category)
+    
+    res.json({
+      success: true,
+      data: materials.map(m => {
+        let url = m.file_path
+        if (!url.startsWith('/uploads/')) {
+          const dir = m.category === 'document' ? 'docs' : (m.category === 'ppt' ? 'ppt' : 'videos')
+          url = `/uploads/${dir}/${m.file_path}`
+        }
+        return {
+          id: m.id,
+          title: m.title,
+          description: m.description,
+          filePath: m.file_path,
+          originalName: m.original_name,
+          category: m.category,
+          subject: m.subject,
+          difficulty: m.difficulty,
+          fileSize: m.file_size,
+          mimeType: m.mime_type,
+          url,
+          createdAt: m.created_at
+        }
+      })
+    })
+  } catch (error) {
+    console.error('搜索学习资料失败:', error)
+    res.status(500).json({ success: false, error: '搜索学习资料失败' })
+  }
+})
+
+// 按类型获取学习资料
+app.get('/api/learning/materials/by-type', (req, res) => {
+  try {
+    const { type } = req.query
+    
+    if (!type) {
+      return res.status(400).json({ success: false, error: '请提供资料类型' })
+    }
+    
+    const materials = learningMaterialDB.getByType(type)
+    
+    res.json({
+      success: true,
+      data: materials.map(m => {
+        let url = m.file_path
+        if (!url.startsWith('/uploads/')) {
+          const dir = m.category === 'document' ? 'docs' : (m.category === 'ppt' ? 'ppt' : 'videos')
+          url = `/uploads/${dir}/${m.file_path}`
+        }
+        return {
+          id: m.id,
+          title: m.title,
+          description: m.description,
+          filePath: m.file_path,
+          originalName: m.original_name,
+          category: m.category,
+          subject: m.subject,
+          difficulty: m.difficulty,
+          fileSize: m.file_size,
+          mimeType: m.mime_type,
+          url,
           createdAt: m.created_at
         }
       })
@@ -1824,8 +2256,14 @@ app.delete('/api/subjects/:name/force', (req, res) => {
     const { name } = req.params
     const { confirmName } = req.body
     
-    // 安全验证：用户必须输入正确的学科名称
-    if (confirmName !== name) {
+    // 获取学科的 displayName 用于验证
+    const subject = subjectDB.get(name)
+    if (!subject) {
+      return res.status(404).json({ success: false, error: '学科不存在' })
+    }
+    
+    // 安全验证：用户必须输入正确的学科名称（name 或 displayName）
+    if (confirmName !== name && confirmName !== subject.display_name) {
       return res.status(400).json({ success: false, error: '学科名称验证失败' })
     }
     
@@ -2487,6 +2925,10 @@ app.post('/api/exams/generate', async (req, res) => {
       return res.status(400).json({ success: false, error: '请至少设置一道题目' })
     }
     
+    // 获取学科显示名称
+    const subjectInfo = subjectDB.get(subject)
+    const subjectDisplayName = subjectInfo?.display_name || subject
+    
     // 创建考试记录
     const examId = examDB.create({
       userId,
@@ -2499,11 +2941,20 @@ app.post('/api/exams/generate', async (req, res) => {
       knowledgeScope
     })
     
-    // 异步生成题目（这里简化处理，实际应该调用AI服务）
-    // 在实际应用中，这里应该启动一个后台任务来生成题目
-    setTimeout(async () => {
+    // 创建AI任务记录
+    const taskId = aiTaskDB.create('exam', `生成${subjectDisplayName}阶段性测试`, `学科: ${subjectDisplayName}, 难度: ${difficulty || '中等'}, 题目数: ${totalQuestions}`)
+    
+    // 异步生成题目并更新任务进度
+    ;(async () => {
       try {
-        // 模拟生成题目
+        // 更新任务状态为处理中
+        aiTaskDB.updateStatus(taskId, 'processing', 10, null, null)
+        
+        // 模拟AI生成题目的过程
+        await new Promise(resolve => setTimeout(resolve, 500))
+        aiTaskDB.updateStatus(taskId, 'processing', 30, null, null)
+        
+        // 生成题目
         const questions = generateMockQuestions(subject, questionCounts, difficulty, knowledgeScope)
         const answers = {}
         const analysis = {}
@@ -2515,14 +2966,46 @@ app.post('/api/exams/generate', async (req, res) => {
           delete q.analysis
         })
         
+        aiTaskDB.updateStatus(taskId, 'processing', 60, null, null)
+        
+        // 更新考试题目
         examDB.updateQuestions(examId, questions, answers, analysis)
+        
+        aiTaskDB.updateStatus(taskId, 'processing', 80, null, null)
+        
+        // 同步到学习中心
+        const examTitle = `${subjectDisplayName}阶段性测试_${new Date().toLocaleDateString('zh-CN')}`
+        const examContent = JSON.stringify({
+          examId: examId,
+          mode: mode,
+          difficulty: difficulty,
+          questionCounts: questionCounts,
+          totalQuestions: totalQuestions
+        })
+        
+        learningMaterialDB.add(
+          examTitle,
+          `由AI智能生成的${subjectDisplayName}阶段性测试，包含${totalQuestions}道题目，难度：${difficulty || '中等'}`,
+          examContent,
+          examTitle,
+          'exam',
+          subject,
+          difficulty || 'medium',
+          0,
+          'application/json'
+        )
+        
+        // 任务完成
+        aiTaskDB.updateStatus(taskId, 'completed', 100, JSON.stringify({ examId: examId }), null)
+        
       } catch (error) {
         console.error('生成题目失败:', error)
         examDB.updateStatus(examId, 'failed')
+        aiTaskDB.updateStatus(taskId, 'failed', 0, null, error.message)
       }
-    }, 1000)
+    })()
     
-    res.json({ success: true, data: { examId, status: 'generating' } })
+    res.json({ success: true, data: { examId, taskId, status: 'generating' } })
   } catch (error) {
     console.error('生成考试失败:', error)
     res.status(500).json({ success: false, error: '生成考试失败' })
@@ -2812,6 +3295,19 @@ app.post('/api/exams/generate-from-bank', async (req, res) => {
       return res.status(400).json({ success: false, error: generated.message })
     }
 
+    // 学科显示名称映射
+    const subjectNames = {
+      math: '高等数学',
+      linear_algebra: '线性代数',
+      probability: '概率论',
+      physics: '大学物理',
+      major: '专业课',
+      english: '英语',
+      programming: '编程',
+      politics: '政治'
+    }
+    const examTitle = `${subjectNames[subject] || subject}阶段性测试_${new Date().toLocaleDateString('zh-CN')}`
+
     // 创建考试记录
     const examId = examDB.create({
       userId,
@@ -2822,7 +3318,7 @@ app.post('/api/exams/generate-from-bank', async (req, res) => {
       questionCounts,
       difficulty,
       knowledgeScope,
-      title: `${subject}阶段性测试（题库）`
+      title: examTitle
     })
 
     // 获取答案和解析
@@ -2832,12 +3328,40 @@ app.post('/api/exams/generate-from-bank', async (req, res) => {
     // 更新考试题目和答案
     examDB.updateQuestions(examId, generated.questions, answers, {})
 
+    // 同时创建学习资料记录，用于在资料列表中显示考试
+    const examContent = JSON.stringify({
+      examId: examId,
+      subject: subject,
+      difficulty: difficulty,
+      timeLimit: timeLimit,
+      enableTimeLimit: enableTimeLimit,
+      mode: mode,
+      questionCounts: questionCounts,
+      knowledgeScope: knowledgeScope,
+      type: 'generated'
+    })
+
+    learningMaterialDB.add(
+      examTitle,
+      `由题库自动生成的${subjectNames[subject] || subject}阶段性测试，共${generated.questions.length}道题目`,
+      '',
+      `${examTitle}.json`,
+      'exam',
+      subject,
+      difficulty || 'medium',
+      0,
+      'application/json',
+      examContent
+    )
+
     res.json({
       success: true,
       data: {
         examId,
         status: 'ready',
-        message: generated.message
+        message: generated.message,
+        actualCounts: generated.questionCounts,
+        totalScore: generated.totalScore
       }
     })
   } catch (error) {
@@ -2870,7 +3394,7 @@ function generateMockQuestions(subject, counts, difficulty, knowledgeScope) {
       type: 'single',
       index: index++,
       score: 5,
-      question: `${subjectName}单选题 ${i + 1}（${difficultyText}）：这是一道测试用的单选题`,
+      content: `${subjectName}单选题 ${i + 1}（${difficultyText}）：这是一道测试用的单选题`,
       options: ['选项A', '选项B', '选项C', '选项D'],
       answer: 'A',
       analysis: `这是${subjectName}单选题${i + 1}的详细解析。正确答案是A。`
@@ -2883,7 +3407,7 @@ function generateMockQuestions(subject, counts, difficulty, knowledgeScope) {
       type: 'multiple',
       index: index++,
       score: 10,
-      question: `${subjectName}多选题 ${i + 1}（${difficultyText}）：这是一道测试用的多选题`,
+      content: `${subjectName}多选题 ${i + 1}（${difficultyText}）：这是一道测试用的多选题`,
       options: ['选项A', '选项B', '选项C', '选项D'],
       answer: 'AB',
       analysis: `这是${subjectName}多选题${i + 1}的详细解析。正确答案是AB。`
@@ -2896,7 +3420,7 @@ function generateMockQuestions(subject, counts, difficulty, knowledgeScope) {
       type: 'fill',
       index: index++,
       score: 5,
-      question: `${subjectName}填空题 ${i + 1}（${difficultyText}）：这是一道测试用的____题`,
+      content: `${subjectName}填空题 ${i + 1}（${difficultyText}）：这是一道测试用的____题`,
       answer: '填空',
       analysis: `这是${subjectName}填空题${i + 1}的详细解析。正确答案是"填空"。`
     })
@@ -2908,7 +3432,7 @@ function generateMockQuestions(subject, counts, difficulty, knowledgeScope) {
       type: 'judge',
       index: index++,
       score: 5,
-      question: `${subjectName}判断题 ${i + 1}（${difficultyText}）：这是一道测试用的判断题`,
+      content: `${subjectName}判断题 ${i + 1}（${difficultyText}）：这是一道测试用的判断题`,
       options: ['正确', '错误'],
       answer: '正确',
       analysis: `这是${subjectName}判断题${i + 1}的详细解析。正确答案是正确。`
@@ -2921,7 +3445,7 @@ function generateMockQuestions(subject, counts, difficulty, knowledgeScope) {
       type: 'comprehensive',
       index: index++,
       score: 20,
-      question: `${subjectName}综合应用题 ${i + 1}（${difficultyText}）：这是一道测试用的综合应用题，请详细解答。`,
+      content: `${subjectName}综合应用题 ${i + 1}（${difficultyText}）：这是一道测试用的综合应用题，请详细解答。`,
       answer: '综合应用题答案示例',
       analysis: `这是${subjectName}综合应用题${i + 1}的详细解析。`
     })

@@ -1,38 +1,5 @@
 <template>
-  <div class="exam-container min-h-screen bg-base-200">
-    <!-- 顶部导航栏 -->
-    <div class="navbar bg-base-100 shadow-lg sticky top-0 z-50">
-      <div class="navbar-start">
-        <button class="btn btn-ghost btn-circle" @click="goBack">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-          </svg>
-        </button>
-        <div class="ml-2">
-          <h1 class="text-lg font-bold">{{ examTitle }}</h1>
-          <p class="text-sm text-base-content/60">{{ subjectName }}</p>
-        </div>
-      </div>
-      <div class="navbar-center">
-        <!-- 倒计时 -->
-        <div v-if="examData?.enable_time_limit && !isCompleted" class="flex items-center gap-2">
-          <div class="countdown font-mono text-2xl" :class="timeWarning ? 'text-error' : 'text-primary'">
-            <span :style="{ '--value': timeDisplay.minutes }">{{ String(timeDisplay.minutes).padStart(2, '0') }}</span>:
-            <span :style="{ '--value': timeDisplay.seconds }">{{ String(timeDisplay.seconds).padStart(2, '0') }}</span>
-          </div>
-        </div>
-      </div>
-      <div class="navbar-end gap-2">
-        <div class="badge badge-lg" :class="modeBadgeClass">
-          {{ modeText }}
-        </div>
-        <button v-if="!isCompleted" class="btn btn-primary btn-sm" @click="submitExam" :disabled="submitting">
-          <span v-if="submitting" class="loading loading-spinner loading-xs"></span>
-          {{ submitting ? '提交中...' : '提交试卷' }}
-        </button>
-      </div>
-    </div>
-
+  <div class="exam-container h-full bg-base-200">
     <!-- 主要内容区 -->
     <div class="container mx-auto p-4">
       <!-- 加载中 -->
@@ -45,7 +12,11 @@
         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        <span>{{ error }}</span>
+        <div class="flex flex-col">
+          <span class="font-medium">{{ error }}</span>
+          <span v-if="errorDetail" class="text-sm opacity-80">{{ errorDetail }}</span>
+        </div>
+        <button class="btn btn-sm btn-ghost ml-auto" @click="goBack">返回学习中心</button>
       </div>
 
       <!-- 考试完成结果页 -->
@@ -251,6 +222,7 @@ const answeredStatus = ref([])
 // 状态
 const loading = ref(true)
 const error = ref('')
+const errorDetail = ref('')
 const submitting = ref(false)
 const isCompleted = ref(false)
 const showReview = ref(false)
@@ -323,19 +295,32 @@ const loadExam = async () => {
     const examInfo = localStorage.getItem('current_exam')
     if (!examInfo) {
       error.value = '没有找到考试信息'
+      errorDetail.value = '请在学习中心重新生成试卷'
       loading.value = false
       return
     }
 
-    const { examId: id } = JSON.parse(examInfo)
+    const { examId: id, settings } = JSON.parse(examInfo)
     examId.value = id
 
     // 获取考试数据
     const response = await fetch(`${apiBaseUrl}/api/exams/${id}`)
+
+    // 处理404错误
+    if (response.status === 404) {
+      error.value = '试卷不存在或已过期'
+      errorDetail.value = '请在学习中心重新生成试卷'
+      loading.value = false
+      // 清除过期的考试信息
+      localStorage.removeItem('current_exam')
+      return
+    }
+
     const data = await response.json()
 
     if (!data.success) {
       error.value = data.error || '加载考试失败'
+      errorDetail.value = data.message || ''
       loading.value = false
       return
     }
@@ -344,6 +329,14 @@ const loadExam = async () => {
     questions.value = data.data.questions || []
     answers.value = data.data.answers || {}
     analysis.value = data.data.analysis || {}
+
+    // 检查题目是否为空
+    if (questions.value.length === 0) {
+      error.value = '试卷题目为空'
+      errorDetail.value = '题库中可能没有足够的题目，请尝试其他学科或使用AI生成'
+      loading.value = false
+      return
+    }
 
     // 初始化用户答案数组
     userAnswers.value = new Array(questions.value.length).fill(undefined)
@@ -359,6 +352,7 @@ const loadExam = async () => {
   } catch (err) {
     console.error('加载考试失败:', err)
     error.value = '加载考试失败，请检查网络连接'
+    errorDetail.value = err.message || ''
     loading.value = false
   }
 }

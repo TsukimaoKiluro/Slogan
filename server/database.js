@@ -183,7 +183,7 @@ export async function initDatabase() {
       description TEXT,
       file_path TEXT NOT NULL,
       original_name TEXT,
-      category TEXT NOT NULL CHECK(category IN ('video', 'document', 'ppt')),
+      category TEXT NOT NULL CHECK(category IN ('video', 'document', 'ppt', 'exam')),
       subject TEXT NOT NULL,
       difficulty TEXT DEFAULT 'medium' CHECK(difficulty IN ('easy', 'medium', 'hard')),
       file_size INTEGER DEFAULT 0,
@@ -989,7 +989,8 @@ export const learningMaterialDB = {
   },
 
   getByCategory(category) {
-    const results = db.exec('SELECT * FROM learning_materials WHERE category = ? ORDER BY created_at DESC', [category])
+    const safeCategory = category.replace(/'/g, "''")
+    const results = db.exec(`SELECT * FROM learning_materials WHERE category = '${safeCategory}' ORDER BY created_at DESC`)
     if (results.length === 0) return []
     const columns = results[0].columns
     return results[0].values.map(row => {
@@ -1000,7 +1001,8 @@ export const learningMaterialDB = {
   },
 
   getBySubject(subject) {
-    const results = db.exec('SELECT * FROM learning_materials WHERE subject = ? ORDER BY created_at DESC', [subject])
+    const safeSubject = subject.replace(/'/g, "''")
+    const results = db.exec(`SELECT * FROM learning_materials WHERE subject = '${safeSubject}' ORDER BY created_at DESC`)
     if (results.length === 0) return []
     const columns = results[0].columns
     return results[0].values.map(row => {
@@ -1012,17 +1014,14 @@ export const learningMaterialDB = {
 
   getByCategoryAndSubject(category, subject) {
     let sql = 'SELECT * FROM learning_materials WHERE 1=1'
-    const params = []
     if (category && category !== 'all') {
-      sql += ' AND category = ?'
-      params.push(category)
+      sql += ` AND category = '${category.replace(/'/g, "''")}'`
     }
     if (subject && subject !== 'all') {
-      sql += ' AND subject = ?'
-      params.push(subject)
+      sql += ` AND subject = '${subject.replace(/'/g, "''")}'`
     }
     sql += ' ORDER BY created_at DESC'
-    const results = db.exec(sql, params)
+    const results = db.exec(sql)
     if (results.length === 0) return []
     const columns = results[0].columns
     return results[0].values.map(row => {
@@ -1033,7 +1032,7 @@ export const learningMaterialDB = {
   },
 
   get(id) {
-    const results = db.exec('SELECT * FROM learning_materials WHERE id = ?', [id])
+    const results = db.exec(`SELECT * FROM learning_materials WHERE id = ${parseInt(id)}`)
     if (results.length === 0 || results[0].values.length === 0) return null
     const columns = results[0].columns
     const row = results[0].values[0]
@@ -1098,6 +1097,45 @@ export const learningMaterialDB = {
     const results = db.exec('SELECT DISTINCT subject FROM learning_materials ORDER BY subject')
     if (results.length === 0) return []
     return results[0].values.map(row => row[0])
+  },
+
+  // 按标题搜索资料（模糊匹配）
+  searchByTitle(keyword, category = null) {
+    const safeKeyword = keyword.replace(/'/g, "''")
+    let sql = `SELECT * FROM learning_materials WHERE title LIKE '%${safeKeyword}%'`
+    
+    if (category) {
+      sql += ` AND category = '${category.replace(/'/g, "''")}'`
+    }
+    
+    sql += ' ORDER BY created_at DESC'
+    const results = db.exec(sql)
+    if (results.length === 0) return []
+    const columns = results[0].columns
+    return results[0].values.map(row => {
+      const obj = {}
+      columns.forEach((col, i) => obj[col] = row[i])
+      return obj
+    })
+  },
+
+  // 按类型获取资料
+  getByType(type) {
+    const categoryMap = {
+      'ppt': 'ppt',
+      'md': 'document',
+      'video': 'video'
+    }
+    const category = categoryMap[type] || type
+    const safeCategory = category.replace(/'/g, "''")
+    const results = db.exec(`SELECT * FROM learning_materials WHERE category = '${safeCategory}' ORDER BY created_at DESC`)
+    if (results.length === 0) return []
+    const columns = results[0].columns
+    return results[0].values.map(row => {
+      const obj = {}
+      columns.forEach((col, i) => obj[col] = row[i])
+      return obj
+    })
   }
 }
 
@@ -1120,7 +1158,7 @@ export const subjectDB = {
   },
 
   get(name) {
-    const results = db.exec('SELECT * FROM subjects WHERE name = ?', [name])
+    const results = db.exec(`SELECT * FROM subjects WHERE name = '${name.replace(/'/g, "''")}'`)
     if (results.length === 0 || results[0].values.length === 0) return null
     const columns = results[0].columns
     const row = results[0].values[0]
@@ -2231,9 +2269,12 @@ function initExamsTable() {
       is_correct INTEGER DEFAULT 0,
       score INTEGER DEFAULT 0,
       answered_at TEXT DEFAULT (datetime('now', 'localtime')),
-      FOREIGN KEY (exam_id) REFERENCES exams(exam_id) ON DELETE CASCADE
+      FOREIGN KEY (exam_id) REFERENCES exams(exam_id) ON DELETE CASCADE,
+      UNIQUE(exam_id, question_index)
     )
   `)
+  // 添加唯一约束（如果表已存在但缺少约束）
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_exam_answers_unique ON exam_answers(exam_id, question_index)`)
 }
 
 export const examDB = {

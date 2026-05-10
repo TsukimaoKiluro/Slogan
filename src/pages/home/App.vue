@@ -1,8 +1,8 @@
 <template>
   <!-- Fish Terminal 风格 -->
-  <div class="terminal-wrapper min-h-screen overflow-hidden bg-base-100">
+  <div class="terminal-wrapper h-full overflow-hidden bg-base-100">
     
-    <div class="terminal-container h-screen flex">
+    <div class="terminal-container h-full flex">
       
       <!-- 左侧会话列表 - Oh My Posh 风格 -->
       <div class="sessions-sidebar flex flex-col" :class="sidebarCollapsed ? 'w-14' : 'w-60'">
@@ -67,15 +67,6 @@
           </div>
         </div>
         
-        <!-- 侧边栏底部 - Oh My Bash 版本信息 -->
-        <div class="sidebar-footer px-3 py-2 border-t border-base-300/30">
-          <transition name="fade">
-            <div v-if="!sidebarCollapsed" class="text-[10px] text-base-content/30">
-              <span class="text-warning">⚙</span> oh-my-bash
-            </div>
-            <div v-else class="text-center text-base-content/30 text-xs">⚙</div>
-          </transition>
-        </div>
       </div>
 
       <!-- 右侧主终端区域 -->
@@ -167,7 +158,9 @@
                       <ActionCard 
                         v-if="block.type === 'action'"
                         :action="block.data"
+                        :existingMaterial="getExistingMaterial(block.data)"
                         @confirm="handleActionConfirm(block.data)"
+                        @view="handleViewMaterial"
                       />
                       <!-- Markdown内容 -->
                       <div 
@@ -191,7 +184,7 @@
 
             <!-- 当前输入行 - 跟随对话的终端输入 -->
             <div v-if="!isTyping" class="current-input-line mt-4">
-              <div class="flex items-start gap-2">
+              <div class="flex items-start gap-2 relative" @click="focusInput">
                 <!-- Oh My Bash 风格提示符 -->
                 <div class="prompt-line flex items-center text-sm flex-shrink-0 mt-0.5">
                   <div class="prompt-item prompt-user">user@localhost</div>
@@ -204,6 +197,22 @@
                   <span class="typed-text">{{ inputText }}</span>
                   <span class="cursor-blink"></span>
                 </div>
+                
+                <!-- 隐藏的真实输入框 - 定位到文本区域 -->
+                <input
+                  ref="hiddenInput"
+                  v-model="inputText"
+                  type="text"
+                  class="absolute opacity-0"
+                  style="top: 2px; left: 130px; min-width: 100px; height: 20px;"
+                  @keydown="handleKeydown"
+                  @blur="onInputBlur"
+                  @focus="onInputFocus"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                />
               </div>
             </div>
 
@@ -488,7 +497,7 @@
         <!-- 底部状态栏 -->
         <div class="terminal-status border-t border-base-300/30 bg-base-200/30 p-2">
           <div class="max-w-5xl mx-auto flex items-center justify-between text-xs text-base-content/30">
-            <span>Oh My Bash · ↑↓ history · Ctrl+L clear · Ctrl+C cancel</span>
+            <span>↑↓ history · Ctrl+L clear</span>
             <span v-if="sessionId" class="text-base-content/20">
               session: {{ sessionId.slice(-8) }}
             </span>
@@ -505,16 +514,20 @@ import { marked } from 'marked'
 import katex from 'katex'
 import { useRouter } from 'vue-router'
 
-// ActionCard 组件 - 终端风格
+// ActionCard 组件 - 终端风格（支持重新生成模式）
 const ActionCard = defineComponent({
   name: 'ActionCard',
   props: {
     action: {
       type: Object,
       required: true
+    },
+    existingMaterial: {
+      type: Object,
+      default: null
     }
   },
-  emits: ['confirm'],
+  emits: ['confirm', 'view'],
   setup(props, { emit }) {
     return () => h('div', { class: 'bg-neutral border border-neutral-600 rounded-lg p-3 mt-3 not-prose' }, [
       h('div', { class: 'flex items-center gap-3' }, [
@@ -529,20 +542,78 @@ const ActionCard = defineComponent({
         // 标题和类型
         h('div', { class: 'flex-1 min-w-0' }, [
           h('div', { class: 'font-semibold text-sm text-neutral-content truncate' }, props.action.prompt),
-          h('span', { class: 'badge badge-ghost badge-sm mt-1 text-neutral-content/60' },
-            props.action.options[0] === 'ppt' ? 'PPT' :
-            props.action.options[0] === 'md' ? 'Markdown' : 'Video'
-          )
+          h('div', { class: 'flex items-center gap-2 mt-1' }, [
+            h('span', { class: 'badge badge-ghost badge-sm text-neutral-content/60' },
+              props.action.options[0] === 'ppt' ? 'PPT' :
+              props.action.options[0] === 'md' ? 'Markdown' : 'Video'
+            ),
+            // 显示唯一标识
+            h('span', { class: 'badge badge-sm text-neutral-content/40' },
+              props.existingMaterial ? '重新生成' : '新建'
+            )
+          ])
         ]),
-        // 确认按钮 - 终端风格
-        h('button', {
-          class: 'btn btn-primary btn-sm gap-1',
-          onClick: () => emit('confirm', props.action)
-        }, [
-          h('span', {}, '['),
-          h('span', { class: 'text-success' }, 'y'),
-          h('span', {}, '] generate')
-        ])
+        // 已有资料时显示两个按钮
+        props.existingMaterial ? [
+          // 查看按钮
+          h('button', {
+            class: 'btn btn-info btn-sm gap-1',
+            onClick: () => emit('view', props.existingMaterial)
+          }, [
+            h('svg', { 
+              xmlns: 'http://www.w3.org/2000/svg', 
+              class: 'h-4 w-4', 
+              viewBox: '0 0 24 24', 
+              fill: 'none', 
+              stroke: 'currentColor', 
+              'stroke-width': '2'
+            }, [
+              h('path', { d: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z' }),
+              h('circle', { cx: '12', cy: '12', r: '3' })
+            ]),
+            '查看'
+          ]),
+          // 重新生成按钮
+          h('button', {
+            class: 'btn btn-warning btn-sm gap-1',
+            onClick: () => emit('confirm', props.action)
+          }, [
+            h('svg', { 
+              xmlns: 'http://www.w3.org/2000/svg', 
+              class: 'h-4 w-4', 
+              viewBox: '0 0 24 24', 
+              fill: 'none', 
+              stroke: 'currentColor', 
+              'stroke-width': '2',
+              'stroke-linecap': 'round',
+              'stroke-linejoin': 'round'
+            }, [
+              h('polyline', { points: '23 4 23 10 17 10' }),
+              h('path', { d: 'M20.49 15a9 9 0 1 1-2.12-9.36L23 10' })
+            ]),
+            '重新生成'
+          ])
+        ] : [
+          // 没有资料时显示生成按钮
+          h('button', {
+            class: 'btn btn-success btn-sm gap-2',
+            onClick: () => emit('confirm', props.action)
+          }, [
+            h('svg', { 
+              xmlns: 'http://www.w3.org/2000/svg', 
+              class: 'h-4 w-4', 
+              viewBox: '0 0 24 24', 
+              fill: 'none', 
+              stroke: 'currentColor', 
+              'stroke-width': '2',
+              'stroke-linecap': 'round',
+              'stroke-linejoin': 'round'
+            }, [
+              h('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' })
+            ]),
+            '生成'
+          ])
+        ]
       ])
     ])
   }
@@ -1060,6 +1131,24 @@ const historyIndex = ref(-1)
 // 终端内容ref
 const terminalContent = ref(null)
 const commandInput = ref(null)
+const hiddenInput = ref(null)
+
+// 聚焦隐藏输入框
+const focusInput = () => {
+  if (hiddenInput.value) {
+    hiddenInput.value.focus()
+  }
+}
+
+// 输入框获得焦点
+const onInputFocus = () => {
+  // 可选：获得焦点时的处理
+}
+
+// 输入框失去焦点
+const onInputBlur = () => {
+  // 可选：失去焦点时的处理
+}
 
 // 清屏
 const clearScreen = () => {
@@ -1069,34 +1158,25 @@ const clearScreen = () => {
 
 // 处理键盘事件
 const handleKeydown = (e) => {
+  // 阻止默认行为，避免光标跳到错误位置
+  if (e.key === 'Enter' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault()
+  }
+  
   // Enter 发送
   if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
     sendMessage()
     return
   }
   
   // Ctrl+L 清屏
   if (e.key === 'l' && e.ctrlKey) {
-    e.preventDefault()
     clearScreen()
-    return
-  }
-  
-  // Ctrl+C 取消
-  if (e.key === 'c' && e.ctrlKey) {
-    e.preventDefault()
-    if (isTyping.value) {
-      cancelRequest()
-    } else {
-      inputText.value = ''
-    }
     return
   }
   
   // 上箭头 - 历史上一条
   if (e.key === 'ArrowUp') {
-    e.preventDefault()
     if (historyIndex.value < commandHistory.value.length - 1) {
       historyIndex.value++
       inputText.value = commandHistory.value[commandHistory.value.length - 1 - historyIndex.value]
@@ -1106,7 +1186,6 @@ const handleKeydown = (e) => {
   
   // 下箭头 - 历史下一条
   if (e.key === 'ArrowDown') {
-    e.preventDefault()
     if (historyIndex.value > 0) {
       historyIndex.value--
       inputText.value = commandHistory.value[commandHistory.value.length - 1 - historyIndex.value]
@@ -1196,6 +1275,7 @@ const parseMessage = (content) => {
   content = decodeHtmlEntities(content)
   
   const blocks = []
+  const actions = []  // 收集所有action用于后续检查
   const generatorSettings = getGeneratorSettings()
   
   // 更健壮的 ACTION 标记解析
@@ -1229,6 +1309,7 @@ const parseMessage = (content) => {
         }
       }
       blocks.push({ type: 'action', data: action })
+      actions.push(action)  // 收集action
       actionCount++
     } catch (e) {
       console.error('解析ACTION失败:', e)
@@ -1246,6 +1327,11 @@ const parseMessage = (content) => {
     if (actionCount <= 1) {
       blocks.push({ type: 'content', html: renderLatex(remainingText) })
     }
+  }
+  
+  // 后台检查现有资料（异步，不阻塞渲染）
+  if (actions.length > 0) {
+    checkExistingMaterials(actions)
   }
   
   return blocks
@@ -1309,6 +1395,86 @@ const getGeneratorConfig = () => {
   return null
 }
 
+// 现有资料存储（用于存储每个生成选项的现有资料信息）
+const existingMaterials = ref({})
+
+// 生成唯一键值
+const generateUniqueKey = (prompt, type) => `${prompt}_${type}`
+
+// 批量检查现有资料（供外部调用，在消息解析后调用）
+const checkExistingMaterials = async (actions) => {
+  for (const action of actions) {
+    const type = action.options[0]
+    const prompt = action.prompt
+    const uniqueKey = generateUniqueKey(prompt, type)
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/generate/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, type })
+      })
+      const data = await response.json()
+      
+      if (data.success && data.data.exists) {
+        existingMaterials.value[uniqueKey] = data.data
+      }
+    } catch (error) {
+      console.error('检查现有资料失败:', error)
+    }
+  }
+}
+
+// 获取某个action的现有资料
+const getExistingMaterial = (action) => {
+  const type = action.options[0]
+  const prompt = action.prompt
+  const uniqueKey = generateUniqueKey(prompt, type)
+  return existingMaterials.value[uniqueKey] || null
+}
+
+// 处理查看按钮
+const handleViewMaterial = (material) => {
+  const type = material.category || 'document'
+  
+  if (type === 'ppt') {
+    const path = material.filePath || material.url
+    router.push({
+      path: '/ppt-viewer',
+      query: {
+        path: path,
+        title: material.title,
+        materialId: material.materialId
+      }
+    })
+  } else if (type === 'document') {
+    // Markdown 文件
+    const path = material.filePath || material.url
+    if (path && path.toLowerCase().endsWith('.md')) {
+      router.push({
+        path: '/markdown',
+        query: {
+          path: path,
+          title: material.title,
+          materialId: material.materialId
+        }
+      })
+    } else {
+      // 普通文档，跳转到学习中心
+      router.push({
+        path: '/learning-center',
+        query: { file: material.materialId }
+      })
+    }
+  } else {
+    // 默认跳转到学习中心
+    router.push({
+      path: '/learning-center',
+      query: { file: material.materialId }
+    })
+  }
+}
+
 // 处理 Action 确认
 const handleActionConfirm = async (action) => {
   const type = action.options[0]
@@ -1317,7 +1483,12 @@ const handleActionConfirm = async (action) => {
   
   // 检查内容类型是否启用
   if (!isContentTypeEnabled(type)) {
-    alert('该内容类型未在设置中启用')
+    addMessage({
+      role: 'ai',
+      content: `<p class="text-warning">⚠️ 该内容类型（${type.toUpperCase()}）未在设置中启用</p>
+        <p class="text-base-content/60 text-sm mt-2">请前往 设置 → 内容生成API → 内容类型 中启用该类型</p>`,
+      time: getTime()
+    })
     return
   }
   
@@ -1325,8 +1496,16 @@ const handleActionConfirm = async (action) => {
   const generatorConfig = getGeneratorConfig()
   if (!generatorConfig || !generatorConfig.apiKey) {
     // 如果没有配置，跳转到设置页面
-    alert('请先在设置中配置内容生成API')
-    router.push('/settings#section-generator')
+    addMessage({
+      role: 'ai',
+      content: `<p class="text-warning">⚠️ 请先配置内容生成API</p>
+        <p class="text-base-content/60 text-sm mt-2">点击下方按钮前往设置：</p>
+        <button onclick="window.location.href='/settings#section-generator'" class="btn btn-sm btn-primary mt-2">
+          前往设置
+        </button>`,
+      time: getTime()
+    })
+    scrollToBottom()
     return
   }
   
@@ -1363,7 +1542,7 @@ const handleActionConfirm = async (action) => {
         <span class="loading loading-spinner loading-sm text-primary"></span>
         <span>正在生成 ${typeNames[type]}...</span>
       </div>
-      <div id="progress-container-${generatingMsgId}" class="text-xs text-base-content/60">准备中...</div>
+      <div id="progress-container-${generatingMsgId}" class="text-xs text-base-content/60">正在等待...</div>
     </div>`,
     time: getTime()
   }
@@ -1407,6 +1586,7 @@ const handleActionConfirm = async (action) => {
   
   const getProgressText = (progress, status) => {
     if (status === 'failed') return '生成失败'
+    if (status === 'pending') return '正在等待...'
     if (progress <= 10) return '正在初始化...'
     if (progress <= 30) return 'AI 正在生成内容...'
     if (progress <= 50) return '内容生成完成，准备处理...'
@@ -1454,15 +1634,20 @@ const handleActionConfirm = async (action) => {
       // 添加预览和下载按钮
       if (data.data.filePath) {
         const fileId = data.data.id || Date.now()
+        const encodedPath = encodeURIComponent(data.data.filePath)
+        const encodedTitle = encodeURIComponent(prompt)
         resultContent += `<div class="flex items-center gap-2 mt-3">`
-        // 预览按钮
-        resultContent += `<button onclick="window.open('${data.data.filePath}', '_blank')" class="btn btn-sm btn-primary gap-1">`
+        
+        // 预览按钮 - 跳转到内置PPT预览器
+        resultContent += `<button onclick="window.location.href='/ppt-viewer?path=${encodedPath}&title=${encodedTitle}'" class="btn btn-sm btn-primary gap-1">`
         resultContent += `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>`
         resultContent += `预览</button>`
+        
         // 下载按钮
         resultContent += `<a href="${data.data.filePath}" download class="btn btn-sm btn-outline gap-1">`
         resultContent += `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>`
         resultContent += `下载</a>`
+        
         // 学习中心跳转按钮
         if (data.data.id) {
           resultContent += `<button onclick="window.location.href='/learning-center?file=${data.data.id}'" class="btn btn-sm btn-secondary gap-1">`
@@ -1621,6 +1806,100 @@ const scrollToBottom = async () => {
   if (terminalContent.value) {
     terminalContent.value.scrollTop = terminalContent.value.scrollHeight
   }
+}
+
+// 重新生成文件（供HTML onclick调用）
+window.handleRegenerate = async (title, type, existingId) => {
+  // 删除旧的学习资料
+  if (existingId) {
+    try {
+      await fetch(`${API_BASE_URL}/api/learning/materials/${existingId}`, {
+        method: 'DELETE'
+      })
+    } catch (e) {
+      console.error('删除旧资料失败:', e)
+    }
+  }
+  
+  // 继续生成新文件
+  const typeNames = { ppt: 'PPT', md: 'Markdown', video: '视频脚本' }
+  const generatingMsgId = Date.now()
+  const generatingMsg = {
+    id: generatingMsgId,
+    role: 'ai',
+    content: `<div class="flex flex-col gap-2">
+      <div class="flex items-center gap-2">
+        <span class="loading loading-spinner loading-sm text-primary"></span>
+        <span>正在重新生成 ${typeNames[type]}...</span>
+      </div>
+      <div id="progress-container-${generatingMsgId}" class="text-xs text-base-content/60">准备中...</div>
+    </div>`,
+    time: getTime()
+  }
+  messages.value.push(generatingMsg)
+  scrollToBottom()
+  
+  // 调用生成API
+  const generatorConfig = getGeneratorConfig()
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: title,
+        type,
+        title,
+        apiConfig: generatorConfig,
+        taskId: null
+      })
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      // 删除生成中的消息
+      messages.value = messages.value.filter(m => m.id !== generatingMsgId)
+      
+      // 显示成功消息
+      let resultContent = `<p class="text-success font-semibold">✓ 已重新生成 "${title}"！</p>`
+      resultContent += `<p class="text-base-content/70 text-sm mt-2">文件类型：${typeNames[type]}</p>`
+      
+      if (data.data.filePath) {
+        const encodedPath = encodeURIComponent(data.data.filePath)
+        const encodedTitle = encodeURIComponent(title)
+        const viewUrl = type === 'ppt' 
+          ? `/ppt-viewer?path=${encodedPath}&title=${encodedTitle}`
+          : `/learning-center?file=${data.data.id}`
+        
+        resultContent += `<div class="flex items-center gap-2 mt-3">`
+        resultContent += `<button onclick="window.location.href='${viewUrl}'" class="btn btn-sm btn-primary gap-1">`
+        resultContent += `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>`
+        resultContent += `阅览</button>`
+        resultContent += `</div>`
+      }
+      
+      const resultMsg = {
+        id: Date.now(),
+        role: 'ai',
+        content: resultContent,
+        time: getTime()
+      }
+      messages.value.push(resultMsg)
+    } else {
+      throw new Error(data.error || '生成失败')
+    }
+  } catch (error) {
+    messages.value = messages.value.filter(m => m.id !== generatingMsgId)
+    const errorMsg = {
+      id: Date.now(),
+      role: 'ai',
+      content: `<p class="text-error">✗ 重新生成失败：${error.message}</p>`,
+      time: getTime()
+    }
+    messages.value.push(errorMsg)
+  }
+  
+  scrollToBottom()
 }
 
 // 添加消息
@@ -1834,6 +2113,7 @@ onMounted(async () => {
       if (inputLine) {
         inputLine.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }
+      focusInput()
     })
   }
   
@@ -1867,6 +2147,11 @@ onMounted(async () => {
   
   // 监听设置变更
   window.addEventListener('study-settings-changed', handleStudySettingsChanged)
+  
+  // 页面加载后自动聚焦输入框
+  setTimeout(() => {
+    focusInput()
+  }, 100)
 })
 
 // 组件卸载时清理
@@ -2224,7 +2509,6 @@ const handleStudySettingsChanged = (e) => {
   min-height: 22px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
-  cursor: text;
 }
 
 .typed-text {

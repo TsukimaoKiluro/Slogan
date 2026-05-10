@@ -1,5 +1,5 @@
 <template>
-  <div class="settings-container p-6" :data-theme="appearanceForm.theme === 'auto' ? '' : appearanceForm.theme">
+  <div class="settings-container h-full p-6 overflow-y-auto" :data-theme="appearanceForm.theme === 'auto' ? '' : appearanceForm.theme">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-3xl font-bold">设置</h1>
@@ -222,16 +222,44 @@
           </div>
 
           <div class="form-control mt-4">
-            <label class="label"><span class="label-text">模型</span></label>
-            <label class="input input-bordered flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-                <path d="M2 17l10 5 10-5"></path>
-                <path d="M2 12l10 5 10-5"></path>
-              </svg>
-              <input v-model="apiForm.model" type="text" :placeholder="getModelPlaceholder()" class="grow" />
+            <label class="label">
+              <span class="label-text">模型</span>
+              <button class="btn btn-xs btn-ghost gap-1" @click="syncApiModels" :disabled="loadingApiModels">
+                <span v-if="loadingApiModels" class="loading loading-spinner loading-xs"></span>
+                <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 4v6h-6M1 20v-6h6"></path>
+                  <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path>
+                </svg>
+                同步模型
+              </button>
             </label>
-            <label class="label"><span class="label-text-alt text-base-content/60">留空使用默认模型</span></label>
+            <div class="dropdown w-full">
+              <label tabindex="0" class="input input-bordered flex items-center gap-2 cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                  <path d="M2 17l10 5 10-5"></path>
+                  <path d="M2 12l10 5 10-5"></path>
+                </svg>
+                <span class="grow">{{ getSelectedModelName(apiForm.model, apiModels) || '请选择模型' }}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6"></path>
+                </svg>
+              </label>
+              <ul tabindex="0" class="dropdown-content z-50 menu p-2 shadow-lg bg-base-100 rounded-box w-full max-h-64 overflow-y-auto">
+                <li v-for="model in apiModels" :key="model.id">
+                  <a @click="selectApiModel(model.id)" :class="{ 'active': apiForm.model === model.id }">
+                    <div class="flex flex-col">
+                      <span class="font-medium">{{ model.name }}</span>
+                      <span class="text-xs opacity-60">{{ model.desc }}</span>
+                    </div>
+                  </a>
+                </li>
+              </ul>
+            </div>
+            <!-- 自定义模型输入 -->
+            <div v-if="showApiCustomModel" class="mt-2">
+              <input v-model="apiForm.model" type="text" :placeholder="getModelPlaceholder()" class="input input-bordered input-sm w-full" />
+            </div>
           </div>
 
           <!-- 高级设置 -->
@@ -497,16 +525,44 @@
           </div>
 
           <div class="form-control mt-4">
-            <label class="label"><span class="label-text">模型</span></label>
-            <label class="input input-bordered flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-                <path d="M2 17l10 5 10-5"></path>
-                <path d="M2 12l10 5 10-5"></path>
-              </svg>
-              <input v-model="generatorForm.model" type="text" :placeholder="getGeneratorModelPlaceholder()" class="grow" />
+            <label class="label">
+              <span class="label-text">模型</span>
+              <button class="btn btn-xs btn-ghost gap-1" @click="syncGeneratorModels" :disabled="loadingGeneratorModels">
+                <span v-if="loadingGeneratorModels" class="loading loading-spinner loading-xs"></span>
+                <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M23 4v6h-6M1 20v-6h6"></path>
+                  <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path>
+                </svg>
+                同步模型
+              </button>
             </label>
-            <label class="label"><span class="label-text-alt text-base-content/60">留空使用默认模型</span></label>
+            <div class="dropdown w-full">
+              <label tabindex="0" class="input input-bordered flex items-center gap-2 cursor-pointer">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                  <path d="M2 17l10 5 10-5"></path>
+                  <path d="M2 12l10 5 10-5"></path>
+                </svg>
+                <span class="grow">{{ getSelectedModelName(generatorForm.model, generatorModels) || '请选择模型' }}</span>
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6"></path>
+                </svg>
+              </label>
+              <ul tabindex="0" class="dropdown-content z-50 menu p-2 shadow-lg bg-base-100 rounded-box w-full max-h-64 overflow-y-auto">
+                <li v-for="model in generatorModels" :key="model.id">
+                  <a @click="selectGeneratorModel(model.id)" :class="{ 'active': generatorForm.model === model.id }">
+                    <div class="flex flex-col">
+                      <span class="font-medium">{{ model.name }}</span>
+                      <span class="text-xs opacity-60">{{ model.desc }}</span>
+                    </div>
+                  </a>
+                </li>
+              </ul>
+            </div>
+            <!-- 自定义模型输入 -->
+            <div v-if="showGeneratorCustomModel" class="mt-2">
+              <input v-model="generatorForm.model" type="text" :placeholder="getGeneratorModelPlaceholder()" class="input input-bordered input-sm w-full" />
+            </div>
           </div>
 
           <!-- 内容类型开关 -->
@@ -677,16 +733,44 @@
             </div>
 
             <div class="form-control">
-              <label class="label"><span class="label-text">模型</span></label>
-              <label class="input input-bordered flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-                  <path d="M2 17l10 5 10-5"></path>
-                  <path d="M2 12l10 5 10-5"></path>
-                </svg>
-                <input v-model="examForm.model" type="text" :placeholder="getExamModelPlaceholder()" class="grow" />
+              <label class="label">
+                <span class="label-text">模型</span>
+                <button class="btn btn-xs btn-ghost gap-1" @click="syncExamModels" :disabled="loadingExamModels">
+                  <span v-if="loadingExamModels" class="loading loading-spinner loading-xs"></span>
+                  <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M23 4v6h-6M1 20v-6h6"></path>
+                    <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"></path>
+                  </svg>
+                  同步模型
+                </button>
               </label>
-              <label class="label"><span class="label-text-alt text-base-content/60">留空使用默认模型</span></label>
+              <div class="dropdown w-full">
+                <label tabindex="0" class="input input-bordered flex items-center gap-2 cursor-pointer">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                    <path d="M2 17l10 5 10-5"></path>
+                    <path d="M2 12l10 5 10-5"></path>
+                  </svg>
+                  <span class="grow">{{ getSelectedModelName(examForm.model, examModels) || '请选择模型' }}</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M6 9l6 6 6-6"></path>
+                  </svg>
+                </label>
+                <ul tabindex="0" class="dropdown-content z-50 menu p-2 shadow-lg bg-base-100 rounded-box w-full max-h-64 overflow-y-auto">
+                  <li v-for="model in examModels" :key="model.id">
+                    <a @click="selectExamModel(model.id)" :class="{ 'active': examForm.model === model.id }">
+                      <div class="flex flex-col">
+                        <span class="font-medium">{{ model.name }}</span>
+                        <span class="text-xs opacity-60">{{ model.desc }}</span>
+                      </div>
+                    </a>
+                  </li>
+                </ul>
+              </div>
+              <!-- 自定义模型输入 -->
+              <div v-if="showExamCustomModel" class="mt-2">
+                <input v-model="examForm.model" type="text" :placeholder="getExamModelPlaceholder()" class="input input-bordered input-sm w-full" />
+              </div>
             </div>
 
             <!-- 高级设置 -->
@@ -983,7 +1067,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, onMounted, watch, nextTick, computed } from 'vue'
 
 const showApiKey = ref(false)
 const showAdvanced = ref(false)
@@ -1001,6 +1085,118 @@ const testingExam = ref(false)
 const testExamResult = ref(null)
 const showToast = ref(false)
 const toastMessage = ref('')
+
+// 代理商模型列表
+const apiModels = ref([])
+const generatorModels = ref([])
+const examModels = ref([])
+const loadingApiModels = ref(false)
+const loadingGeneratorModels = ref(false)
+const loadingExamModels = ref(false)
+
+// 各服务商支持的模型列表（基于2024-2025年真实可用的模型）
+const providerModels = {
+  siliconflow: [
+    { id: 'Qwen/Qwen2.5-7B-Instruct', name: 'Qwen2.5-7B (推荐)', desc: '通义千问7B，性价比高，适合日常对话' },
+    { id: 'Qwen/Qwen2.5-14B-Instruct', name: 'Qwen2.5-14B', desc: '通义千问14B，更强推理能力' },
+    { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen2.5-72B', desc: '通义千问72B，顶尖性能' },
+    { id: 'THUDM/glm-4-9b-chat', name: 'GLM-4-9B', desc: '智谱ChatGLM4 9B' },
+    { id: 'deepseek-ai/DeepSeek-V2.5', name: 'DeepSeek V2.5', desc: '深度求索最新模型' },
+    { id: 'deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1', desc: '深度求索推理模型，数学代码能力强' },
+    { id: 'meta-llama/Meta-Llama-3.1-8B-Instruct', name: 'Llama 3.1 8B', desc: 'Meta开源模型' },
+    { id: 'mistralai/Mistral-7B-Instruct-v0.2', name: 'Mistral 7B', desc: '欧洲开源模型' },
+    { id: 'custom', name: '自定义模型...', desc: '手动输入模型名称' }
+  ],
+  dashscope: [
+    { id: 'qwen-plus', name: 'qwen-plus (推荐)', desc: '通义千问Plus，性价比优' },
+    { id: 'qwen-turbo', name: 'qwen-turbo', desc: '通义千问Turbo，快速响应' },
+    { id: 'qwen-max', name: 'qwen-max', desc: '通义千问Max，最强性能' },
+    { id: 'qwen-long', name: 'qwen-long', desc: '长文本处理，支持100万字' },
+    { id: 'qwen-coder-plus', name: 'qwen-coder-plus', desc: '代码专用模型' },
+    { id: 'qwen2.5-72b-instruct', name: 'qwen2.5-72b-instruct', desc: '开源模型72B' },
+    { id: 'custom', name: '自定义模型...', desc: '手动输入模型名称' }
+  ],
+  coze: [
+    { id: 'custom', name: 'Bot ID (需填写)', desc: '在Coze平台创建Bot后的ID' }
+  ],
+  openai: [
+    { id: 'gpt-4o', name: 'GPT-4o (推荐)', desc: '最新全能模型，支持视觉' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o-mini', desc: '轻量快速版' },
+    { id: 'gpt-4-turbo', name: 'GPT-4-Turbo', desc: '高性能版，支持视觉' },
+    { id: 'gpt-4', name: 'GPT-4', desc: '经典版本' },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5-Turbo', desc: '轻量快速' },
+    { id: 'custom', name: '自定义模型...', desc: '手动输入模型名称' }
+  ],
+  claude: [
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (推荐)', desc: '最新强推理模型' },
+    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', desc: '轻量快速版' },
+    { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', desc: '顶级性能' },
+    { id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet', desc: '均衡之选' },
+    { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', desc: '轻量版' },
+    { id: 'custom', name: '自定义模型...', desc: '手动输入模型名称' }
+  ],
+  gemini: [
+    { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (推荐)', desc: '最新快速模型' },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', desc: '快速响应，支持长上下文' },
+    { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash-8B', desc: '超轻量版' },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', desc: '高性能版，百万token上下文' },
+    { id: 'gemini-pro', name: 'Gemini Pro', desc: '标准版' },
+    { id: 'custom', name: '自定义模型...', desc: '手动输入模型名称' }
+  ],
+  custom: [
+    { id: 'custom', name: '自定义模型...', desc: '请在下方手动输入模型名称' }
+  ]
+}
+
+// 同步API模型列表
+const syncApiModels = async () => {
+  loadingApiModels.value = true
+  try {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    apiModels.value = providerModels[apiForm.provider] || providerModels.custom
+    // 如果当前模型不在列表中，清空
+    if (apiForm.model && !apiModels.value.find(m => m.id === apiForm.model)) {
+      // 保留用户之前的自定义输入
+    } else if (apiForm.model === '' || !apiModels.value.find(m => m.id === apiForm.model)) {
+      apiForm.model = apiModels.value[0]?.id || ''
+    }
+  } finally {
+    loadingApiModels.value = false
+  }
+}
+
+// 同步内容生成模型列表
+const syncGeneratorModels = async () => {
+  loadingGeneratorModels.value = true
+  try {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    generatorModels.value = providerModels[generatorForm.provider] || providerModels.custom
+    if (generatorForm.model === '' || !generatorModels.value.find(m => m.id === generatorForm.model)) {
+      generatorForm.model = generatorModels.value[0]?.id || ''
+    }
+  } finally {
+    loadingGeneratorModels.value = false
+  }
+}
+
+// 同步考试生成模型列表
+const syncExamModels = async () => {
+  loadingExamModels.value = true
+  try {
+    await new Promise(resolve => setTimeout(resolve, 300))
+    examModels.value = providerModels[examForm.provider] || providerModels.custom
+    if (examForm.model === '' || !examModels.value.find(m => m.id === examForm.model)) {
+      examForm.model = examModels.value[0]?.id || ''
+    }
+  } finally {
+    loadingExamModels.value = false
+  }
+}
+
+// 判断是否显示自定义模型输入框
+const showApiCustomModel = computed(() => apiForm.model === 'custom' || !apiModels.value.find(m => m.id === apiForm.model))
+const showGeneratorCustomModel = computed(() => generatorForm.model === 'custom' || !generatorModels.value.find(m => m.id === generatorForm.model))
+const showExamCustomModel = computed(() => examForm.model === 'custom' || !examModels.value.find(m => m.id === examForm.model))
 
 // 提示词相关
 const promptTab = ref('user')
@@ -1356,16 +1552,18 @@ const defaultEndpoints = {
   coze: 'https://api.coze.cn/v1',
   openai: 'https://api.openai.com/v1',
   claude: 'https://api.anthropic.com/v1',
-  gemini: 'https://generativelanguage.googleapis.com/v1beta'
+  gemini: 'https://generativelanguage.googleapis.com/v1beta',
+  custom: ''
 }
 
 const defaultModels = {
   siliconflow: 'Qwen/Qwen2.5-7B-Instruct',
   dashscope: 'qwen-plus',
   coze: 'Bot ID（需填写你的Bot ID）',
-  openai: 'gpt-4',
-  claude: 'claude-3-opus-20240229',
-  gemini: 'gemini-pro'
+  openai: 'gpt-4o',
+  claude: 'claude-3-5-sonnet-20241022',
+  gemini: 'gemini-2.0-flash-exp',
+  custom: ''
 }
 
 const getEndpointPlaceholder = () => {
@@ -1385,6 +1583,40 @@ const getExamEndpointPlaceholder = () => {
 }
 
 const getExamModelPlaceholder = () => defaultModels[examForm.provider]
+
+// 获取选中的模型名称
+const getSelectedModelName = (modelId, modelsList) => {
+  if (!modelId) return ''
+  const model = modelsList.find(m => m.id === modelId)
+  return model ? model.name : modelId
+}
+
+// 选择API模型
+const selectApiModel = (modelId) => {
+  if (modelId !== 'custom') {
+    apiForm.model = modelId
+  } else {
+    apiForm.model = ''
+  }
+}
+
+// 选择内容生成模型
+const selectGeneratorModel = (modelId) => {
+  if (modelId !== 'custom') {
+    generatorForm.model = modelId
+  } else {
+    generatorForm.model = ''
+  }
+}
+
+// 选择考试生成模型
+const selectExamModel = (modelId) => {
+  if (modelId !== 'custom') {
+    examForm.model = modelId
+  } else {
+    examForm.model = ''
+  }
+}
 
 const getActivePromptName = () => {
   if (activePrompt.value.startsWith('user_')) {
@@ -1537,13 +1769,42 @@ const testExamConnection = async () => {
   testingExam.value = true
   testExamResult.value = null
   try {
-    await new Promise(resolve => setTimeout(resolve, 1500))
     if (examForm.useGeneratorConfig) {
       testExamResult.value = { type: 'alert-info', message: 'ℹ 当前使用内容生成API配置，无需单独测试。' }
-    } else if (examForm.apiKey) {
-      testExamResult.value = { type: 'alert-success', message: '✓ API连接成功！配置正确。' }
-    } else {
+      return
+    }
+
+    if (!examForm.apiKey) {
       testExamResult.value = { type: 'alert-warning', message: '⚠ 请输入API密钥后再测试。' }
+      return
+    }
+
+    // 调用后端测试 API
+    const response = await fetch('http://localhost:3001/api/test-api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiConfig: {
+          provider: examForm.provider,
+          endpoint: examForm.endpoint,
+          apiKey: examForm.apiKey,
+          model: examForm.model,
+          timeout: examForm.timeout,
+          maxTokens: examForm.maxTokens,
+          temperature: examForm.temperature
+        }
+      })
+    })
+
+    const data = await response.json()
+    
+    if (data.success) {
+      testExamResult.value = { 
+        type: 'alert-success', 
+        message: `✓ API连接成功！模型：${data.model}，响应：${data.response}` 
+      }
+    } else {
+      testExamResult.value = { type: 'alert-error', message: '✗ ' + data.error }
     }
   } catch (error) {
     testExamResult.value = { type: 'alert-error', message: '✗ API连接失败：' + error.message }
@@ -1626,11 +1887,37 @@ const testApiConnection = async () => {
   testing.value = true
   testResult.value = null
   try {
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    if (apiForm.apiKey) {
-      testResult.value = { type: 'alert-success', message: '✓ API连接成功！配置正确。' }
-    } else {
+    if (!apiForm.apiKey) {
       testResult.value = { type: 'alert-warning', message: '⚠ 请输入API密钥后再测试。' }
+      return
+    }
+
+    // 调用后端测试 API
+    const response = await fetch('http://localhost:3001/api/test-api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiConfig: {
+          provider: apiForm.provider,
+          endpoint: apiForm.endpoint,
+          apiKey: apiForm.apiKey,
+          model: apiForm.model,
+          timeout: apiForm.timeout,
+          maxTokens: apiForm.maxTokens,
+          temperature: apiForm.temperature
+        }
+      })
+    })
+
+    const data = await response.json()
+    
+    if (data.success) {
+      testResult.value = { 
+        type: 'alert-success', 
+        message: `✓ API连接成功！模型：${data.model}，响应：${data.response}` 
+      }
+    } else {
+      testResult.value = { type: 'alert-error', message: '✗ ' + data.error }
     }
   } catch (error) {
     testResult.value = { type: 'alert-error', message: '✗ API连接失败：' + error.message }
@@ -1643,11 +1930,37 @@ const testGeneratorConnection = async () => {
   testingGenerator.value = true
   testGeneratorResult.value = null
   try {
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    if (generatorForm.apiKey) {
-      testGeneratorResult.value = { type: 'alert-success', message: '✓ API连接成功！配置正确。' }
-    } else {
+    if (!generatorForm.apiKey) {
       testGeneratorResult.value = { type: 'alert-warning', message: '⚠ 请输入API密钥后再测试。' }
+      return
+    }
+
+    // 调用后端测试 API
+    const response = await fetch('http://localhost:3001/api/test-api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiConfig: {
+          provider: generatorForm.provider,
+          endpoint: generatorForm.endpoint,
+          apiKey: generatorForm.apiKey,
+          model: generatorForm.model,
+          timeout: generatorForm.timeout,
+          maxTokens: generatorForm.maxTokens,
+          temperature: generatorForm.temperature
+        }
+      })
+    })
+
+    const data = await response.json()
+    
+    if (data.success) {
+      testGeneratorResult.value = { 
+        type: 'alert-success', 
+        message: `✓ API连接成功！模型：${data.model}，响应：${data.response}` 
+      }
+    } else {
+      testGeneratorResult.value = { type: 'alert-error', message: '✗ ' + data.error }
     }
   } catch (error) {
     testGeneratorResult.value = { type: 'alert-error', message: '✗ API连接失败：' + error.message }
@@ -1664,19 +1977,31 @@ const showNotification = (message, type = 'success') => {
 
 const handleProviderChange = () => {
   if (apiForm.provider !== 'custom') apiForm.endpoint = defaultEndpoints[apiForm.provider]
+  syncApiModels()
 }
 
 const handleGeneratorProviderChange = () => {
   if (generatorForm.provider !== 'custom') generatorForm.endpoint = defaultEndpoints[generatorForm.provider]
+  syncGeneratorModels()
+}
+
+const handleExamProviderChange = () => {
+  if (examForm.provider !== 'custom') examForm.endpoint = defaultEndpoints[examForm.provider]
+  syncExamModels()
 }
 
 watch(() => apiForm.provider, handleProviderChange)
 watch(() => generatorForm.provider, handleGeneratorProviderChange)
+watch(() => examForm.provider, handleExamProviderChange)
 
 onMounted(() => {
   loadSavedData()
   if (apiForm.provider !== 'custom') apiForm.endpoint = defaultEndpoints[apiForm.provider]
   if (generatorForm.provider !== 'custom') generatorForm.endpoint = defaultEndpoints[generatorForm.provider]
+  // 初始化模型列表
+  syncApiModels()
+  syncGeneratorModels()
+  syncExamModels()
 })
 </script>
 

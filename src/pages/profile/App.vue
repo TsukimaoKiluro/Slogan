@@ -1,5 +1,5 @@
 <template>
-  <div class="profile-container p-6">
+  <div class="profile-container h-full p-6 overflow-y-auto">
     <!-- 页面标题区域 -->
     <div class="flex items-center justify-between mb-6">
       <div>
@@ -286,10 +286,10 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { RadarChart, BarChart, HeatmapChart, PieChart, ScatterChart, LineChart } from 'echarts/charts'
-import { TitleComponent, TooltipComponent, LegendComponent, GridComponent, VisualMapComponent } from 'echarts/components'
+import { TitleComponent, TooltipComponent, LegendComponent, GridComponent, VisualMapComponent, GraphicComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 
-use([CanvasRenderer, RadarChart, BarChart, HeatmapChart, PieChart, ScatterChart, LineChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent, VisualMapComponent])
+use([CanvasRenderer, RadarChart, BarChart, HeatmapChart, PieChart, ScatterChart, LineChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent, VisualMapComponent, GraphicComponent])
 
 const API_BASE = 'http://localhost:3001/api'
 const currentDate = new Date().toLocaleDateString('zh-CN')
