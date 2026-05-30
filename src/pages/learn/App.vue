@@ -1032,7 +1032,7 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 
-const apiBaseUrl = 'http://localhost:3001'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
 
 // 统计数据
 const stats = ref({ video: 0, document: 0, ppt: 0 })
@@ -1211,9 +1211,53 @@ const closeExamModal = () => {
   isGeneratingExam.value = false
 }
 
+// 从 localStorage 读取考试生成 API 配置
+const getExamApiConfig = () => {
+  try {
+    const saved = localStorage.getItem('settings')
+    if (!saved) return null
+    const settings = JSON.parse(saved)
+    const examConfig = settings.exam || {}
+    
+    // 如果勾选了"使用内容生成API配置"，则使用 generator 配置
+    if (examConfig.useGeneratorConfig && settings.generator?.apiKey) {
+      return {
+        provider: settings.generator.provider || 'siliconflow',
+        endpoint: settings.generator.endpoint || '',
+        apiKey: settings.generator.apiKey,
+        model: settings.generator.model || '',
+        timeout: settings.generator.timeout || 120,
+        maxTokens: settings.generator.maxTokens || 8192,
+        temperature: settings.generator.temperature || 0.7
+      }
+    }
+    
+    if (!examConfig.apiKey) return null
+    
+    return {
+      provider: examConfig.provider || 'siliconflow',
+      endpoint: examConfig.endpoint || '',
+      apiKey: examConfig.apiKey,
+      model: examConfig.model || '',
+      timeout: examConfig.timeout || 120,
+      maxTokens: examConfig.maxTokens || 8192,
+      temperature: examConfig.temperature || 0.7
+    }
+  } catch (e) {
+    return null
+  }
+}
+
 // 生成考试（AI模式）
 const generateExam = async () => {
   if (!canGenerateExam.value) return
+
+  // 检查 AI 配置
+  const apiConfig = getExamApiConfig()
+  if (!apiConfig) {
+    alert('请先在设置页面配置考试生成API（支持硅基流动、阿里云百炼、OpenAI、Claude、Gemini等），或使用"从题库生成"')
+    return
+  }
 
   isGeneratingExam.value = true
   let currentExamId = null
@@ -1225,7 +1269,8 @@ const generateExam = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId: 'default',
-        ...examForm.value
+        ...examForm.value,
+        apiConfig
       })
     })
 
@@ -1373,12 +1418,20 @@ const generateExamFromBank = async () => {
 
       // 如果数量不一致，给出提示
       if (actualTotal < requestedTotal) {
-        const warningMsg = `题库中题目数量不足，已自动调整。\n` +
-          `请求: ${requestedTotal} 题\n` +
-          `实际生成: ${actualTotal} 题\n` +
-          `详情: 单选${actualCounts.single || 0} 多选${actualCounts.multiple || 0} 填空${actualCounts.fill || 0} 判断${actualCounts.judge || 0}`
-        console.warn(warningMsg)
-        // 显示警告（使用console或在UI中提示）
+        const detailParts = []
+        if (actualCounts.single) detailParts.push(`单选${actualCounts.single}`)
+        if (actualCounts.multiple) detailParts.push(`多选${actualCounts.multiple}`)
+        if (actualCounts.fill) detailParts.push(`填空${actualCounts.fill}`)
+        if (actualCounts.judge) detailParts.push(`判断${actualCounts.judge}`)
+        if (actualCounts.comprehensive) detailParts.push(`综合${actualCounts.comprehensive}`)
+        const warningMsg = `题库中题目数量不足，已自动调整。\n请求: ${requestedTotal} 题，实际生成: ${actualTotal} 题\n题型分布: ${detailParts.join(' ')}`
+        
+        // 使用对话框提示用户
+        const shouldContinue = confirm(warningMsg + '\n\n是否继续？')
+        if (!shouldContinue) {
+          isGeneratingExam.value = false
+          return
+        }
       }
 
       // 保存考试ID到本地存储，跳转到考试页面
@@ -1434,6 +1487,13 @@ const startQuickTest = async () => {
 
     const data = await response.json()
     if (data.success) {
+      // 检查实际题目数量
+      const actualCounts = data.data.actualCounts || {}
+      const actualTotal = Object.values(actualCounts).reduce((a, b) => a + b, 0)
+      if (actualTotal === 0) {
+        alert('题库中没有足够的题目，请先添加题目或使用其他学科')
+        return
+      }
       localStorage.setItem('current_exam', JSON.stringify({
         examId: data.data.examId,
         settings: quickSettings

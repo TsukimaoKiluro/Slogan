@@ -2914,7 +2914,7 @@ app.get('/api/ppt/list', async (req, res) => {
 // 生成阶段性测试
 app.post('/api/exams/generate', async (req, res) => {
   try {
-    const { userId, subject, enableTimeLimit, timeLimit, mode, questionCounts, difficulty, knowledgeScope } = req.body
+    const { userId, subject, enableTimeLimit, timeLimit, mode, questionCounts, difficulty, knowledgeScope, apiConfig } = req.body
     
     if (!subject) {
       return res.status(400).json({ success: false, error: '请选择学科' })
@@ -2950,12 +2950,22 @@ app.post('/api/exams/generate', async (req, res) => {
         // 更新任务状态为处理中
         aiTaskDB.updateStatus(taskId, 'processing', 10, null, null)
         
-        // 模拟AI生成题目的过程
-        await new Promise(resolve => setTimeout(resolve, 500))
-        aiTaskDB.updateStatus(taskId, 'processing', 30, null, null)
+        // 生成题目（优先使用真实AI，无AI配置时使用模拟生成作为兜底）
+        let questions
+        if (apiConfig?.apiKey) {
+          console.log(`[考试生成] 使用真实AI生成, provider=${apiConfig.provider}, model=${apiConfig.model}, subject=${subject}, counts=${JSON.stringify(questionCounts)}`)
+          questions = await generateQuestionsWithAI(subject, questionCounts, difficulty, knowledgeScope, apiConfig, (progress) => {
+            aiTaskDB.updateStatus(taskId, 'processing', 10 + Math.floor(progress * 0.7), null, null)
+          })
+          console.log(`[考试生成] AI生成完成, 共${questions.length}道题目`)
+        } else {
+          // 无AI配置，使用模拟生成（保留兜底方案）
+          console.warn(`[考试生成] 未收到apiConfig或缺少apiKey, 使用模拟生成`)
+          await new Promise(resolve => setTimeout(resolve, 500))
+          aiTaskDB.updateStatus(taskId, 'processing', 30, null, null)
+          questions = generateMockQuestions(subject, questionCounts, difficulty, knowledgeScope)
+        }
         
-        // 生成题目
-        const questions = generateMockQuestions(subject, questionCounts, difficulty, knowledgeScope)
         const answers = {}
         const analysis = {}
         
@@ -2966,12 +2976,10 @@ app.post('/api/exams/generate', async (req, res) => {
           delete q.analysis
         })
         
-        aiTaskDB.updateStatus(taskId, 'processing', 60, null, null)
+        aiTaskDB.updateStatus(taskId, 'processing', 80, null, null)
         
         // 更新考试题目
         examDB.updateQuestions(examId, questions, answers, analysis)
-        
-        aiTaskDB.updateStatus(taskId, 'processing', 80, null, null)
         
         // 同步到学习中心
         const examTitle = `${subjectDisplayName}阶段性测试_${new Date().toLocaleDateString('zh-CN')}`
@@ -3308,7 +3316,7 @@ app.post('/api/exams/generate-from-bank', async (req, res) => {
     }
     const examTitle = `${subjectNames[subject] || subject}阶段性测试_${new Date().toLocaleDateString('zh-CN')}`
 
-    // 创建考试记录
+    // 创建考试记录（从题库同步生成，直接设为 ready 状态）
     const examId = examDB.create({
       userId,
       subject,
@@ -3318,7 +3326,8 @@ app.post('/api/exams/generate-from-bank', async (req, res) => {
       questionCounts,
       difficulty,
       knowledgeScope,
-      title: examTitle
+      title: examTitle,
+      status: 'ready'
     })
 
     // 获取答案和解析
@@ -3370,21 +3379,388 @@ app.post('/api/exams/generate-from-bank', async (req, res) => {
   }
 })
 
-// 模拟生成题目（实际应用中应该调用AI服务）
+// ============ AI 题目生成函数 ============
+
+/**
+ * 多策略解析 AI 返回的题目 JSON
+ * 按严格程度从高到低尝试多种解析方式
+ * @param {string} raw - AI 原始返回文本
+ * @returns {Array} 解析出的题目数组（可能为空）
+ */
+function tryParseQuestionsJSON(raw) {
+  if (!raw || typeof raw !== 'string') return []
+
+  // 策略1: 直接 JSON.parse
+  try {
+    const direct = JSON.parse(raw.trim())
+    if (Array.isArray(direct) && direct.length > 0 && isQuestionObject(direct[0])) {
+      return direct
+    }
+  } catch (e) { /* 继续尝试其他策略 */ }
+
+  // 策略2: 提取 markdown ```json ... ``` 代码块
+  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (codeBlockMatch) {
+    try {
+      const parsed = JSON.parse(codeBlockMatch[1].trim())
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+      }
+    } catch (e) { /* 继续 */ }
+
+    // 代码块内可能还有多余文字，尝试提取数组
+    const innerArray = codeBlockMatch[1].match(/\[[\s\S]*\]/)
+    if (innerArray) {
+      try {
+        const parsed = JSON.parse(innerArray[0])
+        if (Array.isArray(parsed)) return parsed
+      } catch (e) { /* 继续 */ }
+    }
+  }
+
+  // 策略3: 正则提取最外层 JSON 数组（贪婪匹配，取最长）
+  const allArrays = [...raw.matchAll(/\[\s*\{[\s\S]*\}\s*\]/g)]
+  if (allArrays.length > 0) {
+    // 取最长的匹配（最可能是完整数组）
+    allArrays.sort((a, b) => b[0].length - a[0].length)
+    try {
+      const parsed = JSON.parse(allArrays[0][0])
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+      }
+    } catch (e) { /* 继续 */ }
+  }
+
+  // 策略4: 尝试提取所有独立对象，组装成数组
+  // 匹配包含题目键值对的 JSON 对象
+  const objects = [...raw.matchAll(/\{[^{}]*"(?:type|content|question)"\s*:[\s\S]*?\}/g)]
+  if (objects.length > 0) {
+    const results = []
+    for (const obj of objects) {
+      try {
+        // 尝试补全并解析每个对象
+        let objStr = obj[0]
+        // 如果对象没有闭合括号，尝试找到对应的闭合位置
+        const openBraces = (objStr.match(/{/g) || []).length
+        const closeBraces = (objStr.match(/}/g) || []).length
+        if (openBraces > closeBraces) {
+          // 在原始文本中向后查找补充闭合括号
+          const startIdx = raw.indexOf(objStr) + objStr.length
+          const tail = raw.substring(startIdx)
+          const extraClose = tail.match(/}/g)?.length || 0
+          for (let i = 0; i < Math.min(openBraces - closeBraces, extraClose); i++) {
+            objStr += '}'
+          }
+        }
+        const parsed = JSON.parse(objStr)
+        if (isQuestionObject(parsed)) results.push(parsed)
+      } catch (e) { /* 跳过无效对象 */ }
+    }
+    if (results.length > 0) return results
+  }
+
+  return []
+}
+
+/**
+ * 判断一个对象是否看起来像题目对象
+ */
+function isQuestionObject(obj) {
+  return obj && typeof obj === 'object' &&
+    (obj.type === 'single' || obj.type === 'multiple' || obj.type === 'fill' ||
+     obj.type === 'judge' || obj.type === 'comprehensive')
+}
+
+/**
+ * 宽松模式解析：当严格解析失败时，尝试从 AI 返回中提取任何可用的题目信息
+ * 即使只有部分字段也保留
+ */
+function tryParseQuestionsJSONLoose(raw, expectedCount, subjectName, difficultyText) {
+  if (!raw || typeof raw !== 'string') return []
+
+  const results = []
+
+  // 尝试逐个提取 { type: ..., content: ..., ... } 对象
+  // 使用更宽松的正则：允许嵌套大括号内的内容
+  const objectPattern = /\{\s*"type"\s*:\s*"(?:single|multiple|fill|judge|comprehensive)"[\s\S]*?\}/g
+  let match
+  while ((match = objectPattern.exec(raw)) !== null) {
+    try {
+      const obj = JSON.parse(match[0])
+      if (isQuestionObject(obj) && obj.content) {
+        results.push(obj)
+      }
+    } catch (e) { /* 跳过 */ }
+  }
+
+  if (results.length > 0) return results
+
+  // 最后手段：如果 AI 返回了看起来像题目的纯文本段落，构造基本题目
+  // 匹配包含"选项"、"答案"等关键词的段落
+  const questionBlocks = raw.split(/\n\n+/).filter(block =>
+    block.includes('A.') || block.includes('B.') || block.includes('选项') ||
+    block.includes('正确') || block.includes('答案是') || /第\d+/.test(block)
+  )
+
+  for (let i = 0; i < Math.min(questionBlocks.length, expectedCount); i++) {
+    const text = questionBlocks[i].trim().substring(0, 500)
+    if (text.length > 20) {
+      results.push({
+        type: 'single',
+        content: text,
+        options: ['A. 选项A', 'B. 选项B', 'C. 选项C', 'D. 选项D'],
+        answer: 'A',
+        analysis: `${subjectName}题目解析`
+      })
+    }
+  }
+
+  return results
+}
+
+
+/**
+ * 调用 AI 生成真实题目
+ * @param {string} subject - 学科标识
+ * @param {Object} counts - 各题型数量 { single, multiple, fill, judge, comprehensive }
+ * @param {string} difficulty - 难度
+ * @param {string} knowledgeScope - 知识点范围
+ * @param {Object} apiConfig - AI API 配置
+ * @param {Function} onProgress - 进度回调
+ * @returns {Promise<Array>} 题目数组
+ */
+async function generateQuestionsWithAI(subject, counts, difficulty, knowledgeScope, apiConfig, onProgress) {
+  const subjectNames = {
+    math: '高等数学', linear_algebra: '线性代数', probability: '概率论',
+    physics: '大学物理', major: '专业课', english: '英语',
+    programming: '编程', politics: '政治'
+  }
+  const subjectName = subjectNames[subject] || subject
+  const difficultyText = { easy: '简单', medium: '中等', hard: '困难', mixed: '混合' }[difficulty] || '中等'
+  
+  // 统计各题型数量
+  const typeList = []
+  if (counts.single > 0) typeList.push({ type: 'single', name: '单选题', count: counts.single, score: 5, desc: '4个选项(A/B/C/D)，只有一个正确答案' })
+  if (counts.multiple > 0) typeList.push({ type: 'multiple', name: '多选题', count: counts.multiple, score: 10, desc: '4个选项(A/B/C/D)，有多个正确答案，答案用字母连写如"AB"' })
+  if (counts.fill > 0) typeList.push({ type: 'fill', name: '填空题', count: counts.fill, score: 5, desc: '题目中用____标记填空位置，答案直接写要填的内容' })
+  if (counts.judge > 0) typeList.push({ type: 'judge', name: '判断题', count: counts.judge, score: 5, desc: '判断对错，答案只能是"正确"或"错误"' })
+  if (counts.comprehensive > 0) typeList.push({ type: 'comprehensive', name: '综合应用题', count: counts.comprehensive, score: 20, desc: '需要详细解答的综合性题目' })
+
+  const totalCount = typeList.reduce((s, t) => s + t.count, 0)
+  if (totalCount === 0) return []
+
+  // 构建题型要求描述
+  const typeDescriptions = typeList.map(t => `- ${t.name}: ${t.count}道（每题${t.score}分），${t.desc}`).join('\n')
+
+  // 分批次生成（避免单次请求太大）
+  const allQuestions = []
+  const batchSize = Math.min(totalCount, 8) // 每次最多生成8道
+  let remainingCounts = { ...counts }
+  let globalIndex = 0
+
+  onProgress?.(0.05)
+
+  while (Object.values(remainingCounts).some(c => c > 0)) {
+    const currentBatchTypes = []
+    let currentBatchCount = 0
+    const currentBatchRemaining = {}
+
+    for (const [type, total] of Object.entries(remainingCounts)) {
+      if (total > 0) {
+        const take = Math.min(total, batchSize - currentBatchCount)
+        if (take > 0) {
+          currentBatchTypes.push(type)
+          currentBatchRemaining[type] = take
+          currentBatchCount += take
+          remainingCounts[type] -= take
+        }
+        if (currentBatchCount >= batchSize) break
+      }
+    }
+
+    if (currentBatchCount === 0) break
+
+    const batchTypeDesc = Object.entries(currentBatchRemaining)
+      .map(([type, count]) => {
+        const info = typeList.find(t => t.type === type)
+        return `${info?.name || type}: ${count}道`
+      }).join('、')
+
+    const systemPrompt = `你是一位专业的${subjectName}教师，擅长编写高质量的教学测试题目。
+请严格按照JSON格式输出题目，不要包含任何其他内容。
+
+【学科】${subjectName}
+【难度】${difficultyText}
+${knowledgeScope ? `【知识点范围】${knowledgeScope}` : ''}
+【本次生成题型】${batchTypeDesc}
+【题型说明】${batchTypeDesc.includes('单选题') ? '单选题: 4个选项(A/B/C/D)，只有一个正确答案。答案格式: "A"' : ''}
+${batchTypeDesc.includes('多选题') ? '多选题: 4个选项(A/B/C/D)，有多个正确答案。答案格式: 用字母连写如"AB"' : ''}
+${batchTypeDesc.includes('填空题') ? '填空题: 题目中用____标记填空位置。答案格式: 直接写答案内容' : ''}
+${batchTypeDesc.includes('判断题') ? '判断题: options固定为["正确", "错误"]。答案格式: "正确"或"错误"' : ''}
+${batchTypeDesc.includes('综合应用') ? '综合应用题: 不需要options。答案包含完整的解答过程' : ''}
+
+【重要要求】
+1. 题目要有实际教学意义，避免过于简单的题目
+2. 数学公式使用LaTeX格式，行内用$...$，块级用$$...$$
+3. 每题必须提供详细的解析，解释解题思路和步骤
+4. 选项要有干扰性，避免明显的错误选项
+5. 严格输出以下JSON数组格式（用代码块包裹）：
+\`\`\`json
+[
+  {
+    "type": "single",
+    "score": 5,
+    "content": "题目内容（支持$\\LaTeX$公式）",
+    "options": ["A. 选项内容", "B. 选项内容", "C. 选项内容", "D. 选项内容"],
+    "answer": "A",
+    "analysis": "详细的解题解析"
+  }
+]
+\`\`\`
+注意：type字段必须是 "single", "multiple", "fill", "judge", "comprehensive" 之一。
+对于判断题，options固定为["正确", "错误"]。
+对于填空题和综合应用题，不需要options字段。
+多选题的answer用大写字母连写，如"AB"、"ACD"。`
+
+    const userPrompt = `请生成以下${subjectName}${difficultyText}难度的题目：
+${batchTypeDesc}
+${knowledgeScope ? `知识点要求：${knowledgeScope}` : ''}
+共需生成 ${currentBatchCount} 道题目。${
+      typeList.filter(t => currentBatchRemaining[t.type]).map(t => `${t.name} ${currentBatchRemaining[t.type]}道`).join('，')
+    }。请严格按JSON格式输出。`
+
+    let result
+    let batchSuccess = false
+    const MAX_RETRIES = 2
+
+    for (let attempt = 0; attempt <= MAX_RETRIES && !batchSuccess; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`[AI题目生成] 第${attempt + 1}次重试, 批次=[${batchTypeDesc}]`)
+          // 重试前稍等，避免连续触发限流
+          await new Promise(r => setTimeout(r, 1000 * attempt))
+        }
+
+        console.log(`[AI题目生成] 开始调用AI API, 学科=${subjectName}, 批次=[${batchTypeDesc}], provider=${apiConfig.provider}, model=${apiConfig.model}`)
+        result = await callAIApi([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ], {
+          ...apiConfig,
+          temperature: Math.max(apiConfig.temperature || 0.7, 0.8), // 题目生成需要一定随机性
+          maxTokens: Math.max(apiConfig.maxTokens || 8192, 8192)
+        }, { stream: false })
+
+        console.log(`[AI题目生成] AI返回内容长度=${result?.length || 0}, 前300字符: ${result?.substring(0, 300) || '(空)'}`)
+
+        // 校验返回值
+        if (!result || typeof result !== 'string' || result.trim().length < 10) {
+          throw new Error(`AI返回内容无效或过短: length=${result?.length || 0}`)
+        }
+
+        // ===== 多策略JSON解析 =====
+        const parsed = tryParseQuestionsJSON(result)
+
+        if (parsed.length === 0 || parsed.length < currentBatchCount * 0.5) {
+          // 解析出的题目数量严重不足，视为失败
+          console.warn(`[AI题目生成] 解析出${parsed.length}道题，期望约${currentBatchCount}道，尝试重试...`)
+          throw new Error(`解析出的题目数量不足: 得到${parsed}道，期望约${currentBatchCount}道`)
+        }
+
+        // 验证并修正题目
+        const validatedQuestions = parsed.map((q, i) => ({
+          type: q.type || 'single',
+          index: globalIndex++,
+          score: q.score || 5,
+          content: q.content || `题目 ${i + 1}`,
+          options: ['fill', 'comprehensive'].includes(q.type) ? undefined : (q.options || ['A', 'B', 'C', 'D']),
+          answer: q.answer || 'A',
+          analysis: q.analysis || '暂无解析'
+        }))
+
+        allQuestions.push(...validatedQuestions)
+        batchSuccess = true
+
+        // 更新进度
+        const progress = 0.05 + (allQuestions.length / totalCount) * 0.7
+        onProgress?.(progress)
+        console.log(`[AI题目生成] 批次[${batchTypeDesc}] 成功! 解析出${validatedQuestions.length}道题`)
+
+      } catch (parseError) {
+        console.error(`[AI题目生成] 批次失败(第${attempt + 1}次): ${batchTypeDesc}`, parseError.name, parseError.message)
+        if (attempt === MAX_RETRIES) {
+          // 所有重试耗尽，使用兜底
+          console.error(`[AI题目生成] 批次[${batchTypeDesc}] 已耗尽${MAX_RETRIES + 1}次尝试，使用模拟题目兜底`)
+          console.error(`[AI题目生成] AI最后返回: ${result?.substring(0, 800) || '(无返回)'}`)
+
+          // 兜底前再尝试一次"宽松解析"
+          const looseParsed = tryParseQuestionsJSONLoose(result, currentBatchCount, subjectName, difficultyText)
+          if (looseParsed.length > 0) {
+            console.log(`[AI题目生成] 宽松解析成功，获得${looseParsed.length}道题目`)
+            const validatedQuestions = looseParsed.map((q, i) => ({
+              type: q.type || 'single',
+              index: globalIndex++,
+              score: q.score || 5,
+              content: q.content || `题目 ${i + 1}`,
+              options: ['fill', 'comprehensive'].includes(q.type) ? undefined : (q.options || ['A', 'B', 'C', 'D']),
+              answer: q.answer || 'A',
+              analysis: q.analysis || '暂无解析'
+            }))
+            allQuestions.push(...validatedQuestions)
+          } else {
+            // 最终兜底：纯占位符
+            const fallbackQuestions = []
+            for (const [type, count] of Object.entries(currentBatchRemaining)) {
+              for (let i = 0; i < count; i++) {
+                fallbackQuestions.push(createFallbackQuestion(type, globalIndex++, subjectName, difficultyText, i))
+              }
+            }
+            allQuestions.push(...fallbackQuestions)
+          }
+
+          const progress = 0.05 + (allQuestions.length / totalCount) * 0.7
+          onProgress?.(progress)
+        }
+      }
+    }
+  }
+
+  return allQuestions
+}
+
+/**
+ * AI解析失败时的单题兜底生成
+ */
+function createFallbackQuestion(type, index, subjectName, difficultyText, num) {
+  const base = {
+    single: { content: `${subjectName}单选题 ${num + 1}（${difficultyText}）`, options: ['A. 选项A', 'B. 选项B', 'C. 选项C', 'D. 选项D'], answer: 'A', score: 5 },
+    multiple: { content: `${subjectName}多选题 ${num + 1}（${difficultyText}）`, options: ['A. 选项A', 'B. 选项B', 'C. 选项C', 'D. 选项D'], answer: 'AB', score: 10 },
+    fill: { content: `${subjectName}填空题 ${num + 1}（${difficultyText}）`, answer: '答案', score: 5 },
+    judge: { content: `${subjectName}判断题 ${num + 1}（${difficultyText}）`, options: ['正确', '错误'], answer: '正确', score: 5 },
+    comprehensive: { content: `${subjectName}综合应用题 ${num + 1}（${difficultyText}）`, answer: '参考答案', score: 20 }
+  }
+  const t = base[type] || base.single
+  return {
+    type,
+    index,
+    score: t.score,
+    content: t.content,
+    options: t.options,
+    answer: t.answer,
+    analysis: `${subjectName}${type === 'single' ? '单选题' : type === 'multiple' ? '多选题' : type === 'fill' ? '填空题' : type === 'judge' ? '判断题' : '综合应用题'}${num + 1}的解析。`
+  }
+}
+
+// 模拟生成题目（AI不可用时的兜底方案，生成的题目有限）
 function generateMockQuestions(subject, counts, difficulty, knowledgeScope) {
   const questions = []
   let index = 0
   
   const difficultyText = { easy: '简单', medium: '中等', hard: '困难', mixed: '混合' }[difficulty] || '中等'
   const subjectNames = {
-    math: '高等数学',
-    linear_algebra: '线性代数',
-    probability: '概率论',
-    physics: '大学物理',
-    major: '专业课',
-    english: '英语',
-    programming: '编程',
-    politics: '政治'
+    math: '高等数学', linear_algebra: '线性代数', probability: '概率论',
+    physics: '大学物理', major: '专业课', english: '英语',
+    programming: '编程', politics: '政治'
   }
   const subjectName = subjectNames[subject] || subject
   
@@ -3394,61 +3770,37 @@ function generateMockQuestions(subject, counts, difficulty, knowledgeScope) {
       type: 'single',
       index: index++,
       score: 5,
-      content: `${subjectName}单选题 ${i + 1}（${difficultyText}）：这是一道测试用的单选题`,
-      options: ['选项A', '选项B', '选项C', '选项D'],
+      content: `${subjectName}单选题 ${i + 1}（${difficultyText}）：请前往"设置"页面配置考试生成API以获得真实题目`,
+      options: ['A. 选项A', 'B. 选项B', 'C. 选项C', 'D. 选项D'],
       answer: 'A',
-      analysis: `这是${subjectName}单选题${i + 1}的详细解析。正确答案是A。`
+      analysis: '这是模拟题目，请配置AI API后重新生成以获取真实题目和解析。'
     })
   }
   
-  // 多选题
+  // 其余题型类似...
   for (let i = 0; i < (counts.multiple || 0); i++) {
-    questions.push({
-      type: 'multiple',
-      index: index++,
-      score: 10,
-      content: `${subjectName}多选题 ${i + 1}（${difficultyText}）：这是一道测试用的多选题`,
-      options: ['选项A', '选项B', '选项C', '选项D'],
-      answer: 'AB',
-      analysis: `这是${subjectName}多选题${i + 1}的详细解析。正确答案是AB。`
-    })
+    questions.push({ type: 'multiple', index: index++, score: 10,
+      content: `${subjectName}多选题 ${i + 1}（${difficultyText}）`,
+      options: ['A', 'B', 'C', 'D'], answer: 'AB',
+      analysis: '模拟题目，请配置AI API后重新生成。' })
   }
-  
-  // 填空题
   for (let i = 0; i < (counts.fill || 0); i++) {
-    questions.push({
-      type: 'fill',
-      index: index++,
-      score: 5,
-      content: `${subjectName}填空题 ${i + 1}（${difficultyText}）：这是一道测试用的____题`,
-      answer: '填空',
-      analysis: `这是${subjectName}填空题${i + 1}的详细解析。正确答案是"填空"。`
-    })
+    questions.push({ type: 'fill', index: index++, score: 5,
+      content: `${subjectName}填空题 ${i + 1}（${difficultyText}）`,
+      answer: '模拟答案',
+      analysis: '模拟题目，请配置AI API后重新生成。' })
   }
-  
-  // 判断题
   for (let i = 0; i < (counts.judge || 0); i++) {
-    questions.push({
-      type: 'judge',
-      index: index++,
-      score: 5,
-      content: `${subjectName}判断题 ${i + 1}（${difficultyText}）：这是一道测试用的判断题`,
-      options: ['正确', '错误'],
-      answer: '正确',
-      analysis: `这是${subjectName}判断题${i + 1}的详细解析。正确答案是正确。`
-    })
+    questions.push({ type: 'judge', index: index++, score: 5,
+      content: `${subjectName}判断题 ${i + 1}（${difficultyText}）`,
+      options: ['正确', '错误'], answer: '正确',
+      analysis: '模拟题目，请配置AI API后重新生成。' })
   }
-  
-  // 综合应用题
   for (let i = 0; i < (counts.comprehensive || 0); i++) {
-    questions.push({
-      type: 'comprehensive',
-      index: index++,
-      score: 20,
-      content: `${subjectName}综合应用题 ${i + 1}（${difficultyText}）：这是一道测试用的综合应用题，请详细解答。`,
-      answer: '综合应用题答案示例',
-      analysis: `这是${subjectName}综合应用题${i + 1}的详细解析。`
-    })
+    questions.push({ type: 'comprehensive', index: index++, score: 20,
+      content: `${subjectName}综合应用题 ${i + 1}（${difficultyText}）`,
+      answer: '模拟参考答案',
+      analysis: '模拟题目，请配置AI API后重新生成。' })
   }
   
   return questions

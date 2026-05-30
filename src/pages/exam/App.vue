@@ -208,7 +208,7 @@ import { useRouter } from 'vue-router'
 import katex from 'katex'
 
 const router = useRouter()
-const apiBaseUrl = 'http://localhost:3001'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
 
 // 考试数据
 const examId = ref('')
@@ -330,6 +330,23 @@ const loadExam = async () => {
     answers.value = data.data.answers || {}
     analysis.value = data.data.analysis || {}
 
+    // 检查考试状态
+    const examStatus = data.data.status
+    if (examStatus === 'generating' || examStatus === 'pending') {
+      error.value = '试卷正在生成中'
+      errorDetail.value = '请稍候再试，或返回学习中心确认生成状态'
+      loading.value = false
+      return
+    }
+
+    if (examStatus === 'failed') {
+      error.value = '试卷生成失败'
+      errorDetail.value = '请返回学习中心重新生成试卷'
+      localStorage.removeItem('current_exam')
+      loading.value = false
+      return
+    }
+
     // 检查题目是否为空
     if (questions.value.length === 0) {
       error.value = '试卷题目为空'
@@ -398,9 +415,9 @@ const answerQuestion = async (index) => {
 
     const data = await response.json()
     if (data.success) {
-      // 更新答案解析
+      // 更新答案解析（以数字索引存储）
       if (data.data.analysis) {
-        analysis.value[question.id] = data.data.analysis
+        analysis.value[index] = data.data.analysis
       }
     }
   } catch (err) {
@@ -480,7 +497,8 @@ const submitExam = async () => {
 const isCorrect = (index) => {
   const question = questions.value[index]
   const userAnswer = userAnswers.value[index]
-  const correctAnswer = answers.value[question.id]?.answer
+  // answers 后端以数字索引存储: { "0": "B", "1": "A", ... }
+  const correctAnswer = answers.value[index]
 
   if (correctAnswer === undefined) return false
 
@@ -495,13 +513,13 @@ const isCorrect = (index) => {
 }
 
 const getCorrectAnswer = (index) => {
-  const question = questions.value[index]
-  return answers.value[question.id]?.answer
+  // answers 以数字索引存储，直接用 index 取值
+  return answers.value[index]
 }
 
 const getAnalysis = (index) => {
-  const question = questions.value[index]
-  return analysis.value[question.id] || answers.value[question.id]?.analysis
+  // analysis 以数字索引存储
+  return analysis.value[index] || ''
 }
 
 const getAnswerStatusClass = (index) => {

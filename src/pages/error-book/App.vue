@@ -256,6 +256,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import katex from 'katex'
 
 const router = useRouter()
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
@@ -432,12 +433,26 @@ const goBack = () => {
   router.back()
 }
 
-// 渲染内容（简单处理LaTeX）
+// 渲染内容（使用KaTeX渲染LaTeX公式）
 const renderContent = (content) => {
   if (!content) return ''
-  // 简单处理，实际项目中可以使用KaTeX
-  return content.replace(/\$\$(.*?)\$\$/g, '<span class="font-mono bg-base-300 px-1 rounded">$1</span>')
-                .replace(/\$(.*?)\$/g, '<span class="font-mono bg-base-300 px-1 rounded">$1</span>')
+  // 先渲染块级公式 $$...$$
+  let html = content.replace(/\$\$(.+?)\$\$/g, (match, latex) => {
+    try {
+      return katex.renderToString(latex, { throwOnError: false, displayMode: true })
+    } catch {
+      return match
+    }
+  })
+  // 再渲染行内公式 $...$
+  html = html.replace(/\$(.+?)\$/g, (match, latex) => {
+    try {
+      return katex.renderToString(latex, { throwOnError: false, displayMode: false })
+    } catch {
+      return match
+    }
+  })
+  return html
 }
 
 // 获取学科名称

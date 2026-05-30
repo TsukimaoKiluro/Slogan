@@ -104,7 +104,7 @@ import { useRouter, useRoute } from 'vue-router'
 const router = useRouter()
 const route = useRoute()
 
-const apiBaseUrl = 'http://localhost:3001'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
 
 // 状态
 const fileName = ref('')           // 显示的文件名/标题（用户自定义）

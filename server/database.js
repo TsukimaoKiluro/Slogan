@@ -2284,6 +2284,7 @@ export const examDB = {
 
   create(data) {
     const examId = this.generateExamId()
+    const initialStatus = data.status || 'generating'
     db.run(`
       INSERT INTO exams (exam_id, user_id, subject, title, mode, time_limit, enable_time_limit, difficulty, knowledge_scope, question_counts, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2298,7 +2299,7 @@ export const examDB = {
       data.difficulty || 'medium',
       data.knowledgeScope || '',
       JSON.stringify(data.questionCounts || {}),
-      'generating'
+      initialStatus
     ])
     saveDatabase()
     return examId
