@@ -149,7 +149,7 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/slogan.git
+git clone https://github.com/TsukimaoKiluro/slogan.git
 cd slogan
 
 # 安装依赖
